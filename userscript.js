@@ -92,6 +92,17 @@
                          this.status = 0;
                          this.dispatchEvent(new Event('error'));
                          return; // send işlemi gg
+                    } else {
+                        // Bloklanmayan sonuckaydet.php yanıtını yakala
+                        self.broadcast({ type: 'SONUC_WAITING', active: true });
+                        this.addEventListener('load', function() {
+                            self.broadcast({ type: 'SONUC_WAITING', active: false });
+                            const parsed = self.parseSonucResponse(this.responseText);
+                            self.broadcast({ type: 'SONUC_RESPONSE', ...parsed });
+                        });
+                        this.addEventListener('error', function() {
+                            self.broadcast({ type: 'SONUC_WAITING', active: false });
+                        });
                     }
                 }
 
@@ -124,6 +135,8 @@
                         }
 
                         return Promise.reject(new Error("GhostKernel Blocked"));
+                    } else {
+                        self.broadcast({ type: 'SONUC_WAITING', active: true });
                     }
                 }
 
@@ -138,8 +151,21 @@
                     if (url.includes('islemler.php')) {
                         clone.text().then(text => self.processStartResponse(text));
                     }
+
+                    if (url.includes('sonuckaydet.php') && !isBypass) {
+                        const clone2 = response.clone();
+                        clone2.text().then(text => {
+                            self.broadcast({ type: 'SONUC_WAITING', active: false });
+                            const parsed = self.parseSonucResponse(text);
+                            self.broadcast({ type: 'SONUC_RESPONSE', ...parsed });
+                        });
+                    }
+
                     return response;
                 } catch (err) {
+                    if (url.includes('sonuckaydet.php') && !isBypass) {
+                        self.broadcast({ type: 'SONUC_WAITING', active: false });
+                    }
                     throw err;
                 }
             };
@@ -198,6 +224,63 @@
             });
         },
 
+        // Helper: sonuckaydet.php yanıtını parse et
+        parseSonucResponse: function(text) {
+            try {
+                const json = JSON.parse(text);
+                const durum = json.durum;
+                let durumText = 'unknown';
+                let durumType = 'unknown';
+                if (durum === 0 || durum === '0') { durumText = 'başarılı'; durumType = 'success'; }
+                else if (durum === 1 || durum === '1') { durumText = 'warn'; durumType = 'warn'; }
+                else if (durum === 2 || durum === '2' || durum === 'error') { durumText = 'error'; durumType = 'error'; }
+                else if (durum === 3 || durum === '3') { durumText = 'unknown'; durumType = 'unknown'; }
+                return {
+                    durum: durumType,
+                    durumText: durumText,
+                    mesaj: json.mesaj || json.message || text
+                };
+            } catch(e) {
+                return { durum: 'error', durumText: 'error', mesaj: text };
+            }
+        },
+
+        // Helper: Birincileri getir
+        fetchLeaderboard: function() {
+            const durations = ['1%3A00', '3%3A00', '5%3A00'];
+            const labels = ['1 dk', '3 dk', '5 dk'];
+            const results = [];
+            const self = this;
+
+            const fetchOne = (index) => {
+                if (index >= durations.length) {
+                    self.broadcast({ type: 'LEADERBOARD_DATA', data: results });
+                    return;
+                }
+                window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        'X-Bypass-Interceptor': 'true'
+                    },
+                    body: 'islem=hizlilari_getir&sure=' + durations[index] + '&tarih=hepsi'
+                }).then(res => res.text()).then(text => {
+                    try {
+                        const json = JSON.parse(text);
+                        results.push({ label: labels[index], data: json });
+                    } catch(e) {
+                        results.push({ label: labels[index], data: null, raw: text });
+                    }
+                    fetchOne(index + 1);
+                }).catch(err => {
+                    results.push({ label: labels[index], data: null, error: err.message });
+                    fetchOne(index + 1);
+                });
+            };
+
+            fetchOne(0);
+        },
+
         // Helper: Auto-Submit Tetikleyici
         triggerAutoSubmit: function() {
             // Builder verilerini tazeleyelim (kullanıcı UI'dan değiştirmiş olabilir, veya varsayılanlar)
@@ -224,6 +307,8 @@
                 params.append(key, payload[key]);
             }
 
+            this.broadcast({ type: 'SONUC_WAITING', active: true });
+
             window.fetch('https://katiponline.com/klavye-hiz-testi/sonuckaydet.php', {
                 method: 'POST',
                 headers: {
@@ -233,9 +318,13 @@
                 body: params.toString()
             }).then(res => res.text()).then(text => {
                 console.log("GhostKernel: Auto-Submit BAŞARILI!", text);
+                this.broadcast({ type: 'SONUC_WAITING', active: false });
+                const parsed = this.parseSonucResponse(text);
+                this.broadcast({ type: 'SONUC_RESPONSE', ...parsed });
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER BAŞARILI!" });
             }).catch(err => {
                 console.error("GhostKernel: Auto-Submit HATASI", err);
+                this.broadcast({ type: 'SONUC_WAITING', active: false });
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER HATASI!" });
             });
         },
@@ -286,9 +375,19 @@
                 case 'GET_INIT_STATE':
                     // UI açıldığında ona mevcut durumu gönder
                     this.popupWindow = event.source;
+                    // Cookie'den username oku
+                    let username = '';
+                    try {
+                        const cookies = document.cookie.split(';');
+                        for (const c of cookies) {
+                            const parts = c.trim().split('=');
+                            if (parts[0] === 'username') { username = decodeURIComponent(parts[1]); break; }
+                        }
+                    } catch(e) {}
                     this.broadcast({
                         type: 'INIT_STATE',
-                        state: this.state
+                        state: this.state,
+                        username: username
                     });
                     break;
                 case 'UPDATE_CONFIG':
@@ -317,12 +416,15 @@
                     this.state.builderData = msg.data; // Son veriyi al
                     this.triggerAutoSubmit();
                     break;
+                case 'FETCH_LEADERBOARD':
+                    this.fetchLeaderboard();
+                    break;
             }
         },
 
         injectTriggerButton: function() {
             const btn = document.createElement('button');
-            btn.textContent = 'KatiPwn';
+            btn.textContent = '🐦 KatiPwn';
             btn.style.cssText = `
                 position: fixed; bottom: 20px; left: 20px; z-index: 99999;
                 padding: 10px 20px; background: rgba(0,0,0,0.8); color: #00ff41;
@@ -437,7 +539,7 @@
 <html lang="tr">
 <head>
     <meta charset="UTF-8">
-    <title>KatiPwn version 1.0</title>
+    <title>🐦 KatiPwn version 1.0</title>
     <style>
         :root {
             --bg: #050505;
@@ -632,27 +734,102 @@
             font-size: 11px; color: #aaa; margin-top: 10px; height: 20px; overflow: hidden; white-space: nowrap;
         }
 
+        /* Sonuç durumu */
+        .sonuc-status {
+            margin-top: 5px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+        .sonuc-status.success { background: rgba(0,255,65,0.15); color: #00ff41; border-left: 3px solid #00ff41; }
+        .sonuc-status.warn { background: rgba(255,200,0,0.15); color: #ffc800; border-left: 3px solid #ffc800; }
+        .sonuc-status.error { background: rgba(255,42,42,0.15); color: #ff2a2a; border-left: 3px solid #ff2a2a; }
+        .sonuc-status.unknown { background: rgba(128,128,128,0.15); color: #888; border-left: 3px solid #888; }
+
+        /* Bekleme animasyonu */
+        .waiting-animation {
+            text-align: center;
+            color: var(--neon-green);
+            font-family: monospace;
+            padding: 10px;
+            font-size: 16px;
+        }
+
+        /* Liderler tablosu */
+        #leaderboard-container {
+            border-top: 1px solid var(--border);
+            padding: 10px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .leader-card {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 6px;
+            margin-bottom: 5px;
+            border: 1px solid rgba(255,255,255,0.05);
+        }
+        .leader-card img {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--neon-green);
+        }
+        .leader-info { flex: 1; }
+        .leader-name { color: var(--neon-green); font-weight: bold; font-size: 12px; }
+        .leader-score { color: #aaa; font-size: 10px; }
+        .leader-duration { color: var(--neon-pink); font-size: 10px; font-weight: bold; }
+        .leader-section-title {
+            color: var(--neon-pink);
+            font-size: 11px;
+            font-weight: bold;
+            margin: 8px 0 4px 0;
+        }
+
+        /* Kullanıcı adı barı */
+        .username-bar {
+            padding: 10px 15px;
+            background: rgba(0,255,65,0.05);
+            border: 1px solid rgba(0,255,65,0.2);
+            border-radius: 8px;
+            font-size: 12px;
+            color: var(--neon-green);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
     </style>
 </head>
 <body>
     <div class="app-container">
         <!-- SIDEBAR -->
         <div class="sidebar">
-            <div class="sidebar-header">AĞ İZLEME GEÇMİŞİ</div>
+            <div class="sidebar-header">📡 AĞ İZLEME GEÇMİŞİ</div>
             <ul id="req-list">
                 <!-- İstekler buraya gelecek -->
             </ul>
+            <button class="cyber-btn" id="btn-leaderboard" style="margin: 10px; font-size: 11px;">🏆 BİRİNCİLERİ GETİR</button>
+            <div id="leaderboard-container"></div>
         </div>
 
         <!-- MAIN -->
         <div class="main">
 
+            <!-- KULLANICI BİLGİSİ -->
+            <div class="username-bar" id="username-bar" style="display:none;">
+                🐦 <span id="username-display"></span>
+            </div>
+
             <!-- AYARLAR -->
             <div class="glass-panel">
-                <span class="panel-title">SİSTEM KONTROLÜ</span>
+                <span class="panel-title">🛡️ SİSTEM KONTROLÜ</span>
 
                 <div class="switch-row green">
-                    <span class="switch-label">OTO-GÖNDER (Auto-Submit)</span>
+                    <span class="switch-label">🚀 OTO-GÖNDER (Auto-Submit)</span>
                     <label class="switch">
                         <input type="checkbox" id="toggle-autosubmit">
                         <span class="slider"></span>
@@ -660,7 +837,7 @@
                 </div>
 
                 <div class="switch-row red">
-                    <span class="switch-label">BLOKLAYICI (Request Blocker)</span>
+                    <span class="switch-label">🔒 BLOKLAYICI (Request Blocker)</span>
                     <label class="switch">
                         <input type="checkbox" id="toggle-blocker">
                         <span class="slider"></span>
@@ -674,15 +851,15 @@
 
             <!-- REQUEST BUILDER -->
             <div class="glass-panel">
-                <span class="panel-title">İSTEK OLUŞTURUCU (BUILDER)</span>
+                <span class="panel-title">🛠️ İSTEK OLUŞTURUCU (BUILDER)</span>
 
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div class="profile-badges">
-                        <span class="badge" onclick="setProfile('normal')">NORMAL (60)</span>
-                        <span class="badge" onclick="setProfile('pro')">PRO (110)</span>
-                        <span class="badge" onclick="setProfile('god')">GOD (200+)</span>
+                        <span class="badge" onclick="setProfile('normal')">🐦 NORMAL (60)</span>
+                        <span class="badge" onclick="setProfile('pro')">⚡ PRO (110)</span>
+                        <span class="badge" onclick="setProfile('god')">🦅 GOD (200+)</span>
                     </div>
-                    <button class="cyber-btn refresh-btn" id="btn-refresh">MANUEL YENİLE</button>
+                    <button class="cyber-btn refresh-btn" id="btn-refresh">🔄 MANUEL YENİLE</button>
                 </div>
 
                 <div class="form-grid" id="builder-form">
@@ -730,8 +907,8 @@
                     <input type="hidden" id="imla" value="">
                 </div>
 
-                <button class="cyber-btn" id="btn-send" style="width: 100%;">BU VERİLERLE GÖNDER</button>
-                <div id="log-area">Sistem Hazır.</div>
+                <button class="cyber-btn" id="btn-send" style="width: 100%;">⚡ BU VERİLERLE GÖNDER</button>
+                <div id="log-area">🐦 Sistem Hazır.</div>
             </div>
 
         </div>
@@ -782,18 +959,24 @@
                 if (msg.state.builderData && msg.state.builderData.calisma_token) {
                     fillForm(msg.state.builderData);
                 }
+
+                // Kullanıcı adı
+                if (msg.username) {
+                    document.getElementById('username-display').textContent = msg.username + ' ile giriş yapıldı';
+                    document.getElementById('username-bar').style.display = 'flex';
+                }
             }
             else if (msg.type === 'NEW_REQUEST') {
                 addRequest(msg.request);
             }
             else if (msg.type === 'GAME_STARTED') {
-                log("OYUN BAŞLADI: " + msg.token);
+                log("🎮 OYUN BAŞLADI: " + msg.token);
                 // Refresh triggerla
                 opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
             }
             else if (msg.type === 'REFRESH_DONE') {
                 fillForm(msg.data);
-                log("Veriler tazelendi.");
+                log("🔄 Veriler tazelendi.");
             }
             else if (msg.type === 'FORCE_BLOCKER') {
                 els.toggleBlock.checked = msg.value;
@@ -801,6 +984,16 @@
             }
             else if (msg.type === 'LOG') {
                 log(msg.message);
+            }
+            else if (msg.type === 'SONUC_WAITING') {
+                if (msg.active) startWaitingAnimation();
+                else stopWaitingAnimation();
+            }
+            else if (msg.type === 'SONUC_RESPONSE') {
+                displaySonucStatus(msg.durum, msg.durumText, msg.mesaj);
+            }
+            else if (msg.type === 'LEADERBOARD_DATA') {
+                displayLeaderboard(msg.data);
             }
         });
 
@@ -908,6 +1101,111 @@
 
         els.inputs.dogru.addEventListener('input', calculateStats);
         els.inputs.yanlis.addEventListener('input', calculateStats);
+
+        // --- SONUÇ DURUM FONKSİYONLARI ---
+
+        function displaySonucStatus(durum, durumText, mesaj) {
+            stopWaitingAnimation();
+            const statusDiv = document.createElement('div');
+            statusDiv.className = 'sonuc-status ' + durum;
+
+            let icon = '❓';
+            if (durum === 'success') icon = '✅';
+            else if (durum === 'warn') icon = '⚠️';
+            else if (durum === 'error') icon = '❌';
+
+            statusDiv.innerHTML = icon + ' Durum: ' + durumText + '<br><span style="font-size:10px;opacity:0.8;">' + mesaj + '</span>';
+
+            const firstItem = els.reqList.firstElementChild;
+            if (firstItem) {
+                firstItem.appendChild(statusDiv);
+            } else {
+                const li = document.createElement('li');
+                li.className = 'req-item';
+                li.appendChild(statusDiv);
+                els.reqList.prepend(li);
+            }
+
+            log(icon + ' Sonuç: ' + durumText + ' - ' + mesaj);
+        }
+
+        // --- BEKLENİRKEN ANİMASYON ---
+
+        let waitingAnimInterval = null;
+
+        function startWaitingAnimation() {
+            const frames = ['(>_<)', '((>_<))', '(((>_<)))', '((>_<))', '(>_<)'];
+            let frameIndex = 0;
+            stopWaitingAnimation();
+            waitingAnimInterval = setInterval(() => {
+                els.log.textContent = '⏳ ' + frames[frameIndex];
+                els.log.style.color = '#00ff41';
+                frameIndex = (frameIndex + 1) % frames.length;
+            }, 300);
+        }
+
+        function stopWaitingAnimation() {
+            if (waitingAnimInterval) {
+                clearInterval(waitingAnimInterval);
+                waitingAnimInterval = null;
+            }
+        }
+
+        // --- LİDERLER TABLOSU ---
+
+        document.getElementById('btn-leaderboard').addEventListener('click', () => {
+            document.getElementById('leaderboard-container').innerHTML = '<div class="waiting-animation">⏳ Yükleniyor...</div>';
+            opener.postMessage({ type: 'FETCH_LEADERBOARD' }, '*');
+        });
+
+        function displayLeaderboard(data) {
+            const container = document.getElementById('leaderboard-container');
+            container.innerHTML = '';
+
+            data.forEach(item => {
+                const header = document.createElement('div');
+                header.className = 'leader-section-title';
+                header.textContent = '🏆 ' + item.label + ' Birincisi';
+                container.appendChild(header);
+
+                if (item.data) {
+                    try {
+                        let players = Array.isArray(item.data) ? item.data : (item.data.data || item.data.sonuclar || [item.data]);
+                        if (players.length > 0) {
+                            const p = players[0];
+                            const card = document.createElement('div');
+                            card.className = 'leader-card';
+                            const imgSrc = p.resim || p.avatar || p.kullanici_resmi || 'https://katiponline.com/images/default-avatar.png';
+                            const name = p.kullanici_adi || p.isim || p.ad || 'Bilinmiyor';
+                            const score = p.puan || p.yarisma_puani || p.skor || '?';
+                            card.innerHTML =
+                                '<img src="' + imgSrc + '" onerror="this.src=\'https://katiponline.com/images/default-avatar.png\'">' +
+                                '<div class="leader-info">' +
+                                    '<div class="leader-name">🐦 ' + name + '</div>' +
+                                    '<div class="leader-score">⚡ ' + score + ' puan</div>' +
+                                '</div>' +
+                                '<div class="leader-duration">' + item.label + '</div>';
+                            container.appendChild(card);
+                        } else {
+                            const noData = document.createElement('div');
+                            noData.style.cssText = 'color:#666;font-size:11px;padding:4px;';
+                            noData.textContent = 'Veri bulunamadı';
+                            container.appendChild(noData);
+                        }
+                    } catch(e) {
+                        const errDiv = document.createElement('div');
+                        errDiv.style.cssText = 'color:#666;font-size:11px;padding:4px;';
+                        errDiv.textContent = 'Parse hatası';
+                        container.appendChild(errDiv);
+                    }
+                } else {
+                    const errDiv = document.createElement('div');
+                    errDiv.style.cssText = 'color:#666;font-size:11px;padding:4px;';
+                    errDiv.textContent = 'Veri alınamadı';
+                    container.appendChild(errDiv);
+                }
+            });
+        }
 
     </script>
 </body>
