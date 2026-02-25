@@ -59,6 +59,7 @@
             XMLHttpRequest.prototype.send = function(body) {
                 const xhr = this;
                 const url = this._url || "";
+                let reqId = null;
 
                 // Bypass Kontrolü
                 const isBypass = this._headers && (this._headers['X-Bypass-Interceptor'] === 'true');
@@ -96,7 +97,23 @@
                 }
 
                 if (!isBypass) {
-                    self.logRequest('XHR', this._method, url, body, false);
+                    reqId = self.logRequest('XHR', this._method, url, body, false);
+                }
+
+                // Response Hooking for XHR
+                if (reqId) {
+                    this.addEventListener('load', function() {
+                        self.updateRequestLog(reqId, {
+                            response: this.responseText,
+                            status: this.status
+                        });
+                    });
+                    this.addEventListener('error', function() {
+                        self.updateRequestLog(reqId, {
+                            response: "NETWORK_ERROR",
+                            status: 0
+                        });
+                    });
                 }
 
                 return originalXHRSend.apply(this, arguments);
@@ -108,6 +125,7 @@
                 const method = (init && init.method) ? init.method : 'GET';
                 const body = (init && init.body) ? init.body : null;
                 const headers = (init && init.headers) ? init.headers : {};
+                let reqId = null;
 
                 // Bypass Kontrolü
                 let isBypass = false;
@@ -128,18 +146,34 @@
                 }
 
                 if (!isBypass) {
-                    self.logRequest('FETCH', method, url, body, false);
+                    reqId = self.logRequest('FETCH', method, url, body, false);
                 }
 
                 try {
                     const response = await originalFetch.apply(this, arguments);
-                    const clone = response.clone();
 
                     if (url.includes('islemler.php')) {
-                        clone.text().then(text => self.processStartResponse(text));
+                        const cloneForStart = response.clone();
+                        cloneForStart.text().then(text => self.processStartResponse(text));
                     }
+
+                    if (reqId) {
+                        const cloneForLog = response.clone();
+                        cloneForLog.text().then(text => {
+                            self.updateRequestLog(reqId, {
+                                response: text,
+                                status: response.status
+                            });
+                        }).catch(err => {
+                            self.updateRequestLog(reqId, { response: "Error reading response: " + err });
+                        });
+                    }
+
                     return response;
                 } catch (err) {
+                    if (reqId) {
+                         self.updateRequestLog(reqId, { response: "FETCH_ERROR: " + err });
+                    }
                     throw err;
                 }
             };
@@ -187,7 +221,9 @@
             const reqData = {
                 id: Date.now() + Math.random(), // Unique ID
                 type, method, url, body, blocked,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                response: null,
+                status: null
             };
             this.state.requests.unshift(reqData); // En başa ekle
 
@@ -196,6 +232,20 @@
                 type: 'NEW_REQUEST',
                 request: reqData
             });
+
+            return reqData.id;
+        },
+
+        updateRequestLog: function(id, data) {
+            const req = this.state.requests.find(r => r.id === id);
+            if (req) {
+                Object.assign(req, data);
+                this.broadcast({
+                    type: 'UPDATE_REQUEST_LOG',
+                    id: id,
+                    data: data
+                });
+            }
         },
 
         // Helper: Auto-Submit Tetikleyici
@@ -271,6 +321,29 @@
             return data;
         },
 
+        // Helper: Yeni Çalışma Tokeni İste
+        fetchNewToken: function() {
+            console.log("GhostKernel: Yeni token isteniyor...");
+            // Bu istek Interceptor tarafından yakalanacak ve loglanacaktır.
+            // Bypass header'ı göndermiyoruz.
+            window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: 'islem=calisma_baslat'
+            }).then(res => res.text())
+              .then(text => {
+                  console.log("GhostKernel: Token isteği tamamlandı.");
+                  // Interceptor zaten processStartResponse'u çağırmış olmalı (url check nedeniyle)
+                  // Ancak processStartResponse XHR/fetch clone üzerinden çağrılıyor.
+                  // Burada ayrıca işlem yapmamıza gerek yok, interceptor hallediyor.
+              })
+              .catch(err => {
+                  console.error("GhostKernel: Token isteği hatası", err);
+              });
+        },
+
         // UI <-> Kernel
         broadcast: function(msg) {
             if (this.popupWindow && !this.popupWindow.closed) {
@@ -316,6 +389,10 @@
                     // Manuel gönder butonu (Target Page'den)
                     this.state.builderData = msg.data; // Son veriyi al
                     this.triggerAutoSubmit();
+                    break;
+                case 'GET_TOKEN':
+                    // Token iste
+                    this.fetchNewToken();
                     break;
             }
         },
@@ -632,6 +709,28 @@
             font-size: 11px; color: #aaa; margin-top: 10px; height: 20px; overflow: hidden; white-space: nowrap;
         }
 
+        /* MODAL */
+        .modal {
+            display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%;
+            overflow: auto; background-color: rgba(0,0,0,0.8); backdrop-filter: blur(5px);
+        }
+        .modal-content {
+            background-color: #111; margin: 5% auto; padding: 20px; border: 1px solid var(--neon-green);
+            width: 80%; max-width: 800px; color: var(--text); position: relative;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2); border-radius: 8px;
+        }
+        .close-modal {
+            color: #aaa; float: right; font-size: 28px; font-weight: bold; cursor: pointer;
+        }
+        .close-modal:hover, .close-modal:focus { color: var(--neon-green); text-decoration: none; cursor: pointer; }
+        #modal-body {
+            white-space: pre-wrap; word-wrap: break-word; font-family: monospace; font-size: 12px;
+            max-height: 60vh; overflow-y: auto; color: #ddd;
+        }
+        .json-key { color: var(--neon-pink); }
+        .json-val { color: var(--neon-green); }
+        .json-str { color: #f0f080; }
+
     </style>
 </head>
 <body>
@@ -688,7 +787,10 @@
                 <div class="form-grid" id="builder-form">
                     <div class="input-group full-width">
                         <label>Çalışma Token</label>
-                        <input type="text" id="calisma_token" readonly style="opacity: 0.7;">
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="calisma_token" readonly style="opacity: 0.7; flex: 1;">
+                            <button id="btn-get-token" class="cyber-btn" style="margin:0; padding: 5px 10px; font-size: 10px;">TOKEN AL</button>
+                        </div>
                     </div>
 
                     <div class="input-group">
@@ -701,8 +803,11 @@
                     </div>
 
                     <div class="input-group">
-                        <label>Süre (mm:ss)</label>
-                        <input type="text" id="sure" value="01:00">
+                        <label>Süre (mm:ss / sn)</label>
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="sure" value="01:00" placeholder="mm:ss" style="flex: 2;">
+                            <input type="number" id="sure_sn" value="60" placeholder="sn" style="flex: 1;">
+                        </div>
                     </div>
                     <div class="input-group">
                         <label>Puan</label>
@@ -735,6 +840,15 @@
             </div>
 
         </div>
+
+        <!-- DETAIL MODAL -->
+        <div id="detail-modal" class="modal">
+            <div class="modal-content">
+                <span class="close-modal">&times;</span>
+                <h3 id="modal-title">REQUEST DETAILS</h3>
+                <div id="modal-body"></div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -751,14 +865,24 @@
                 dogru: document.getElementById('dogru'),
                 yanlis: document.getElementById('yanlis'),
                 sure: document.getElementById('sure'),
+                sure_sn: document.getElementById('sure_sn'),
                 yarisma_puani: document.getElementById('yarisma_puani'),
                 dtv: document.getElementById('dtv'),
                 ytv: document.getElementById('ytv'),
                 metin: document.getElementById('metin'),
                 saniyebilgisi: document.getElementById('saniyebilgisi')
             },
-            log: document.getElementById('log-area')
+            log: document.getElementById('log-area'),
+            modal: {
+                el: document.getElementById('detail-modal'),
+                content: document.getElementById('modal-body'),
+                close: document.querySelector('.close-modal')
+            },
+            btnGetToken: document.getElementById('btn-get-token')
         };
+
+        const requestsMap = new Map();
+        let currentModalReqId = null;
 
         // Initialize
         if (opener) {
@@ -785,6 +909,16 @@
             }
             else if (msg.type === 'NEW_REQUEST') {
                 addRequest(msg.request);
+            }
+            else if (msg.type === 'UPDATE_REQUEST_LOG') {
+                const req = requestsMap.get(msg.id);
+                if (req) {
+                    Object.assign(req, msg.data);
+                    // Eğer modal açıksa ve bu isteği gösteriyorsa güncelle
+                    if (currentModalReqId === msg.id) {
+                        renderModalContent(req);
+                    }
+                }
             }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
@@ -815,6 +949,9 @@
         function addRequest(req) {
             if (req.method !== 'POST' && !req.blocked) return; // Filtrele
 
+            // Store in Map
+            requestsMap.set(req.id, req);
+
             const li = document.createElement('li');
             li.className = 'req-item' + (req.blocked ? ' blocked' : '');
             const time = new Date(req.timestamp).toLocaleTimeString();
@@ -825,19 +962,112 @@
                 <span class="req-url">\${req.url.split('/').pop()}</span>
             \`;
 
-            // Tıklayınca payload göster (ileride detay modalı eklenebilir)
             li.onclick = () => {
-                console.log(req.body);
-                log("Payload konsola yazıldı.");
+                openModal(req.id);
             };
 
             els.reqList.prepend(li);
         }
 
+        // --- MODAL LOGIC ---
+        function openModal(reqId) {
+            const req = requestsMap.get(reqId);
+            if (!req) return;
+
+            currentModalReqId = reqId;
+            renderModalContent(req);
+            els.modal.el.style.display = "block";
+        }
+
+        function closeModal() {
+            els.modal.el.style.display = "none";
+            currentModalReqId = null;
+        }
+
+        function renderModalContent(req) {
+            let html = \`<div><strong>URL:</strong> \${req.url}</div>\`;
+            html += \`<div><strong>Method:</strong> \${req.method}</div>\`;
+            html += \`<div><strong>Time:</strong> \${new Date(req.timestamp).toLocaleString()}</div>\`;
+            html += \`<div><strong>Status:</strong> \${req.blocked ? '<span style="color:var(--neon-red)">BLOCKED</span>' : (req.status || 'PENDING')}</div>\`;
+
+            html += \`<div style="margin-top:10px; border-top:1px solid #333; padding-top:5px; color:var(--neon-green)">PAYLOAD:</div>\`;
+            html += \`<pre>\${formatBody(req.body)}</pre>\`;
+
+            if (req.response) {
+                html += \`<div style="margin-top:10px; border-top:1px solid #333; padding-top:5px; color:var(--neon-pink)">RESPONSE:</div>\`;
+                html += \`<pre>\${formatBody(req.response)}</pre>\`;
+            }
+
+            els.modal.content.innerHTML = html;
+        }
+
+        function formatBody(body) {
+            if (!body) return "Wait...";
+            try {
+                if (typeof body === 'object') return syntaxHighlight(body);
+                // Try parse URL encoded
+                if (body.includes('=') && !body.includes('{')) {
+                    const params = new URLSearchParams(body);
+                    const obj = {};
+                    for(const [k,v] of params.entries()) obj[k] = v;
+                    return syntaxHighlight(obj);
+                }
+                // Try parse JSON string
+                const json = JSON.parse(body);
+                return syntaxHighlight(json);
+            } catch (e) {
+                return escapeHtml(body);
+            }
+        }
+
+        function escapeHtml(text) {
+             if (typeof text !== 'string') return text;
+             return text.replace(/&/g, "&amp;")
+                        .replace(/</g, "&lt;")
+                        .replace(/>/g, "&gt;")
+                        .replace(/"/g, "&quot;")
+                        .replace(/'/g, "&#039;");
+        }
+
+        function syntaxHighlight(json) {
+            if (typeof json != 'string') {
+                 json = JSON.stringify(json, undefined, 2);
+            }
+            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
+                var cls = 'json-val'; // number
+                if (/^"/.test(match)) {
+                    if (/:$/.test(match)) {
+                        cls = 'json-key';
+                    } else {
+                        cls = 'json-str';
+                    }
+                } else if (/true|false/.test(match)) {
+                    cls = 'json-val'; // boolean
+                } else if (/null/.test(match)) {
+                    cls = 'json-val'; // null
+                }
+                return '<span class="' + cls + '">' + match + '</span>';
+            });
+        }
+
+        // Close Modal Events
+        els.modal.close.onclick = closeModal;
+        window.onclick = function(event) {
+            if (event.target == els.modal.el) {
+                closeModal();
+            }
+        };
+
+
         function fillForm(data) {
             for (const key in data) {
                 const el = document.getElementById(key);
                 if (el) el.value = data[key];
+            }
+            // Sync sure_sn
+            if (data.saniyebilgisi && els.inputs.sure_sn) {
+                els.inputs.sure_sn.value = data.saniyebilgisi;
             }
             // Auto-Math çalıştır
             calculateStats();
@@ -872,10 +1102,40 @@
         document.getElementById('btn-send').addEventListener('click', () => {
             const formData = {};
             document.querySelectorAll('#builder-form input').forEach(inp => {
-                formData[inp.id] = inp.value;
+                if (inp.id !== 'sure_sn') { // sure_sn'i gönderme, sure zaten var
+                    formData[inp.id] = inp.value;
+                }
             });
             opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
         });
+
+        // Token Button
+        els.btnGetToken.addEventListener('click', () => {
+             opener.postMessage({ type: 'GET_TOKEN' }, '*');
+        });
+
+        // Duration Sync
+        els.inputs.sure.addEventListener('input', (e) => {
+            // mm:ss -> seconds
+            const val = e.target.value;
+            if (val.includes(':')) {
+                const parts = val.split(':');
+                const m = parseInt(parts[0]) || 0;
+                const s = parseInt(parts[1]) || 0;
+                els.inputs.sure_sn.value = (m * 60) + s;
+                els.inputs.saniyebilgisi.value = els.inputs.sure_sn.value;
+            }
+        });
+
+        els.inputs.sure_sn.addEventListener('input', (e) => {
+            // seconds -> mm:ss
+            const sec = parseInt(e.target.value) || 0;
+            const m = Math.floor(sec / 60).toString().padStart(2, '0');
+            const s = (sec % 60).toString().padStart(2, '0');
+            els.inputs.sure.value = `${m}:${s}`;
+            els.inputs.saniyebilgisi.value = sec;
+        });
+
 
         // --- Auto Math & Profil ---
 
