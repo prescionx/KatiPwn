@@ -29,10 +29,17 @@
         init: function() {
             console.log("GhostKernel: Başlatılıyor...");
             this.hookNetwork();
-            this.injectHUDStyles();
             this.injectTriggerButton();
 
             window.addEventListener('message', (e) => this.handleMessage(e));
+
+            // Shift+K ile popup aç
+            document.addEventListener('keydown', (e) => {
+                if (e.shiftKey && e.code === 'KeyK' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.openPopup();
+                }
+            });
         },
 
         // Interceptor
@@ -191,8 +198,6 @@
 
                     console.log(`GhostKernel: Oyun Başladı! Token: ${token}, Süre: ${duration}sn`);
 
-                    HUDManager.show(duration);
-
                     // UI'a haber ver
                     this.broadcast({
                         type: 'GAME_STARTED',
@@ -264,7 +269,7 @@
                     if (!this.state.builderData) this.state.builderData = {};
                     this.state.builderData.calisma_token = token;
 
-                    this.broadcast({ type: 'REFRESH_DONE', data: this.state.builderData });
+                    this.broadcast({ type: 'TOKEN_UPDATED', token: token });
                     this.broadcast({ type: 'LOG', message: "Token Alındı!" });
                 } else {
                     this.broadcast({ type: 'LOG', message: "Token Alınamadı!" });
@@ -415,6 +420,50 @@
                 case 'GET_TOP_SCORERS':
                     this.fetchTopScorers();
                     break;
+                case 'TAKE_FIRST_PLACE':
+                    this.takeFirstPlace();
+                    break;
+                case 'PING':
+                    this.broadcast({ type: 'PONG', timestamp: Date.now() });
+                    break;
+                case 'GET_USERNAME': {
+                    let email = null;
+                    let uname = null;
+                    let profilePhoto = null;
+                    // Primary: profile div with d-flex align-items-center
+                    const profileDiv = document.querySelector('div.d-flex.flex-column.align-items-center');
+                    if (profileDiv) {
+                        const bolder = profileDiv.querySelector('p.fw-bolder');
+                        if (bolder) uname = bolder.textContent.trim();
+                        const muted = profileDiv.querySelector('p.text-muted');
+                        if (muted) {
+                            const t = muted.textContent.trim();
+                            if (t.includes('@')) email = t;
+                        }
+                        const img = profileDiv.querySelector('img.rounded-circle');
+                        if (img) {
+                            const src = img.getAttribute('src');
+                            if (src) profilePhoto = src.startsWith('http') ? src : 'https://katiponline.com/duello/' + src;
+                        }
+                    }
+                    // Fallback: <li><p class="text-muted">email@...</p></li>
+                    if (!email) {
+                        const allLi = document.querySelectorAll('li');
+                        for (const li of allLi) {
+                            const p = li.querySelector('p.text-muted');
+                            if (p) {
+                                const text = p.textContent.trim();
+                                if (text && text.includes('@')) { email = text; break; }
+                            }
+                        }
+                    }
+                    if (!uname) {
+                        const profileEl = document.querySelector('.username, .profil-adi, [class*="username"], [class*="kullanici"]');
+                        if (profileEl) uname = profileEl.textContent.trim();
+                    }
+                    this.broadcast({ type: 'USERNAME_RESULT', username: uname, email: email, profilePhoto: profilePhoto });
+                    break;
+                }
             }
         },
 
@@ -450,9 +499,117 @@
             });
         },
 
+        fetchTokenAsync: function() {
+            return window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                body: 'islem=calisma_baslat'
+            }).then(res => res.text()).then(text => {
+                let token = null;
+                try {
+                    const json = JSON.parse(text);
+                    token = json.calisma_token || json.token;
+                } catch(e) {
+                    const match = text.match(/calisma_token["']?\s*:\s*["']?([^"'}]+)["']?/);
+                    if (match) token = match[1];
+                }
+                if (token) {
+                    this.state.lastToken = token;
+                    if (!this.state.builderData) this.state.builderData = {};
+                    this.state.builderData.calisma_token = token;
+                }
+                return token;
+            }).catch(() => null);
+        },
+
+        sendPayloadAsync: function(payload) {
+            const params = new URLSearchParams();
+            for (const key in payload) params.append(key, payload[key]);
+            const url = 'https://katiponline.com/klavye-hiz-testi/sonuckaydet.php';
+            const body = params.toString();
+            const reqId = this.logRequest('FETCH', 'POST', url, body, false);
+
+            return window.fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Bypass-Interceptor': 'true'
+                },
+                body: body
+            }).then(res => {
+                const status = res.status;
+                return res.text().then(text => {
+                    this.updateRequestResponse(reqId, text, status);
+                    return text;
+                });
+            }).catch(err => {
+                this.updateRequestResponse(reqId, err.message, 0);
+                return null;
+            });
+        },
+
+        takeFirstPlace: async function() {
+            const steps = [
+                { dogru: 360, sure: '01:00', saniyebilgisi: 60 },
+                { dogru: 1080, sure: '03:00', saniyebilgisi: 180 },
+                { dogru: 1800, sure: '05:00', saniyebilgisi: 300 },
+                { dogru: 1800, sure: '01:00', saniyebilgisi: 300 },
+                { dogru: 1800, sure: '03:00', saniyebilgisi: 300 },
+                { dogru: 1800, sure: '05:00', saniyebilgisi: 300 },
+            ];
+
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                this.broadcast({ type: 'TAKE_FIRST_PLACE_PROGRESS', step: i + 1, total: 6, status: 'token' });
+                this.broadcast({ type: 'LOG', message: 'Ad\u0131m ' + (i+1) + '/6: Token al\u0131n\u0131yor...' });
+
+                const token = await this.fetchTokenAsync();
+                if (!token) {
+                    this.broadcast({ type: 'LOG', message: 'Token al\u0131namad\u0131! \u0130\u015Flem durduruluyor.' });
+                    this.broadcast({ type: 'TAKE_FIRST_PLACE_DONE', success: false });
+                    return;
+                }
+
+                const payload = {
+                    calisma_token: token,
+                    dogru: step.dogru,
+                    yanlis: 0,
+                    sure: step.sure,
+                    saniyebilgisi: step.saniyebilgisi,
+                    dtv: step.dogru * 6,
+                    ytv: 0,
+                    yarisma_puani: step.dogru,
+                    metin: '',
+                    metingrububilgisi: '',
+                    baslik: '',
+                    imla: ''
+                };
+
+                this.broadcast({ type: 'TAKE_FIRST_PLACE_PROGRESS', step: i + 1, total: 6, status: 'sending' });
+                this.broadcast({ type: 'LOG', message: 'Ad\u0131m ' + (i+1) + '/6: G\u00F6nderiliyor (' + step.sure + ', ' + step.dogru + ' kelime)...' });
+
+                await this.sendPayloadAsync(payload);
+
+                this.broadcast({ type: 'LOG', message: 'Ad\u0131m ' + (i+1) + '/6: Tamamland\u0131!' });
+            }
+
+            this.broadcast({ type: 'LOG', message: 'Birincili\u011Fe yerle\u015Fme tamamland\u0131!' });
+            this.broadcast({ type: 'TAKE_FIRST_PLACE_DONE', success: true });
+        },
+
+        openPopup: function() {
+            const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
+            if (win) {
+                UIManager.render(win);
+                this.popupWindow = win;
+            } else {
+                alert("Lütfen popup izni verin!");
+            }
+        },
+
         injectTriggerButton: function() {
             const btn = document.createElement('button');
-            btn.textContent = 'KatiPwn';
+            btn.textContent = 'KatiPwn (Shift+K)';
             btn.style.cssText = `
                 position: fixed; bottom: 20px; left: 20px; z-index: 99999;
                 padding: 10px 20px; background: rgba(0,0,0,0.8); color: #00ff41;
@@ -463,97 +620,8 @@
             btn.onmouseover = () => btn.style.boxShadow = "0 0 20px #00ff41";
             btn.onmouseout = () => btn.style.boxShadow = "0 0 10px #00ff41";
 
-            btn.onclick = () => {
-                const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
-                if (win) {
-                    UIManager.render(win);
-                    this.popupWindow = win;
-                } else {
-                    alert("Lütfen popup izni verin!");
-                }
-            };
+            btn.onclick = () => this.openPopup();
             document.body.appendChild(btn);
-        },
-
-        injectHUDStyles: function() {
-            const style = document.createElement('style');
-            style.textContent = `
-                #ghost-hud {
-                    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-                    z-index: 10000; display: flex; flex-direction: column; gap: 5px;
-                    pointer-events: none; opacity: 0; transition: opacity 0.5s;
-                }
-                .hud-bar {
-                    background: rgba(0,0,0,0.7); border: 1px solid #00ff41;
-                    padding: 5px 15px; border-radius: 4px; display: flex; align-items: center;
-                    gap: 10px; color: #fff; font-family: monospace; font-size: 14px;
-                    box-shadow: 0 0 10px rgba(0,255,65,0.2); backdrop-filter: blur(4px);
-                }
-                .hud-time { font-weight: bold; font-size: 18px; color: #00ff41; }
-                .hud-label { font-size: 10px; color: #aaa; text-transform: uppercase; }
-                .hud-safe { border-color: #ff00de; box-shadow: 0 0 10px rgba(255,0,222,0.2); }
-                .hud-safe .hud-time { color: #ff00de; }
-            `;
-            document.head.appendChild(style);
-        }
-    };
-
-    // --- HUD YÖNETİCİSİ (ANA EKRAN) ---
-    const HUDManager = {
-        el: null,
-        intervals: [],
-
-        create: function() {
-            if (document.getElementById('ghost-hud')) return;
-            const container = document.createElement('div');
-            container.id = 'ghost-hud';
-            container.innerHTML = `
-                <div class="hud-bar">
-                    <span class="hud-label">Orijinal</span>
-                    <span class="hud-time" id="hud-orig">00:00</span>
-                </div>
-                <div class="hud-bar hud-safe">
-                    <span class="hud-label">+5sn Safe</span>
-                    <span class="hud-time" id="hud-safe">00:00</span>
-                </div>
-            `;
-            document.body.appendChild(container);
-            this.el = container;
-        },
-
-        show: function(duration) {
-            this.create();
-            this.el.style.opacity = '1';
-
-            // Temizle
-            this.intervals.forEach(clearInterval);
-            this.intervals = [];
-
-            let originalTime = duration;
-            let safeTime = duration + 5;
-
-            const update = () => {
-                const fmt = (t) => {
-                    if (t < 0) return "00:00";
-                    const m = Math.floor(t / 60).toString().padStart(2,'0');
-                    const s = (t % 60).toString().padStart(2,'0');
-                    return `${m}:${s}`;
-                };
-
-                document.getElementById('hud-orig').textContent = fmt(originalTime);
-                document.getElementById('hud-safe').textContent = fmt(safeTime);
-
-                if (originalTime > 0) originalTime--;
-                if (safeTime > 0) safeTime--;
-
-                if (safeTime < 0) {
-                    this.el.style.opacity = '0';
-                    this.intervals.forEach(clearInterval);
-                }
-            };
-
-            update(); // İlk render
-            this.intervals.push(setInterval(update, 1000));
         }
     };
 
@@ -624,6 +692,39 @@
             border: 1px solid #333;
         }
 
+        /* Connection Lost Overlay */
+        .disconnect-overlay {
+            display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(5,5,5,0.97); backdrop-filter: blur(10px);
+            flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+        }
+        .disconnect-overlay.active { display: flex; }
+        .disconnect-icon { font-size: 64px; }
+        .disconnect-title { font-size: 22px; font-weight: bold; color: var(--neon-red); text-shadow: 0 0 10px var(--neon-red); }
+        .disconnect-msg { font-size: 13px; color: #888; text-align: center; max-width: 350px; }
+        .disconnect-btn {
+            margin-top: 10px; padding: 12px 32px; border: 1px solid var(--neon-green); background: rgba(0,255,65,0.1);
+            color: var(--neon-green); font-family: monospace; font-size: 13px; cursor: pointer; border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .disconnect-btn:hover { background: rgba(0,255,65,0.25); box-shadow: 0 0 15px rgba(0,255,65,0.3); }
+
+        /* Confirmation Overlay */
+        .confirm-overlay {
+            display: none; position: fixed; z-index: 99998; left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(5,5,5,0.95); backdrop-filter: blur(10px);
+            flex-direction: column; align-items: center; justify-content: center;
+        }
+        .confirm-overlay.active { display: flex; }
+        .confirm-box {
+            background: #111; border: 1px solid var(--neon-green); border-radius: 8px; padding: 25px;
+            max-width: 420px; display: flex; flex-direction: column; gap: 15px;
+            box-shadow: 0 0 30px rgba(0,255,65,0.15);
+        }
+        .confirm-title { font-size: 18px; font-weight: bold; color: var(--neon-green); text-align: center; }
+        .confirm-msg { font-size: 12px; color: #aaa; line-height: 1.6; }
+        .confirm-progress { font-size: 12px; color: var(--neon-green); text-align: center; padding: 10px 0; }
+
         .app-container {
             display: grid;
             grid-template-columns: 300px 1fr;
@@ -692,6 +793,7 @@
         .leader-info { display: flex; flex-direction: column; }
         .leader-name { font-weight: bold; color: var(--neon-pink); }
         .leader-score { color: var(--neon-green); }
+        .leader-emoji { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; background: rgba(255,255,255,0.1); }
 
         /* Main Content (Builder) */
         .main {
@@ -842,21 +944,17 @@
         <!-- MAIN -->
         <div class="main">
 
-            <div style="margin-bottom: 10px; font-size: 12px; color: #888;">
-                Giriş yapıldı: <span id="username-display" style="color: var(--neon-green); font-weight: bold;">...</span>
+            <div style="margin-bottom: 10px; font-size: 12px; color: #888; display: flex; align-items: center; gap: 12px;">
+                <span id="user-avatar" style="width:48px;height:48px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:28px;background:rgba(255,255,255,0.1);">👤</span>
+                <div>
+                    <span id="username-display" style="color: var(--neon-green); font-weight: bold; font-size: 16px;">...</span>
+                    <span id="email-display" style="color: #666; font-size: 11px; display: block;"></span>
+                </div>
             </div>
 
             <!-- AYARLAR -->
             <div class="glass-panel">
                 <span class="panel-title">SİSTEM KONTROLÜ</span>
-
-                <div class="switch-row green">
-                    <span class="switch-label">OTO-GÖNDER (Auto-Submit)</span>
-                    <label class="switch">
-                        <input type="checkbox" id="toggle-autosubmit">
-                        <span class="slider"></span>
-                    </label>
-                </div>
 
                 <div class="switch-row red">
                     <span class="switch-label">BLOKLAYICI (Request Blocker)</span>
@@ -864,10 +962,6 @@
                         <input type="checkbox" id="toggle-blocker">
                         <span class="slider"></span>
                     </label>
-                </div>
-
-                <div style="font-size: 10px; color: #666; margin-top: 5px;">
-                    * Auto-Submit açıldığında Blocker otomatik kilitlenir.
                 </div>
             </div>
 
@@ -877,9 +971,9 @@
 
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div class="profile-badges">
-                        <span class="badge" onclick="setProfile('normal')">NORMAL (60)</span>
-                        <span class="badge" onclick="setProfile('pro')">PRO (110)</span>
-                        <span class="badge" onclick="setProfile('god')">GOD (200+)</span>
+                        <span class="badge" onclick="setProfile('1dk')">1 DK (360)</span>
+                        <span class="badge" onclick="setProfile('3dk')">3 DK (1080)</span>
+                        <span class="badge" onclick="setProfile('5dk')">5 DK (1800)</span>
                     </div>
                     <button class="cyber-btn refresh-btn" id="btn-refresh">MANUEL YENİLE</button>
                 </div>
@@ -895,7 +989,7 @@
 
                     <div class="input-group">
                         <label>Doğru Kelime</label>
-                        <input type="number" id="dogru" value="120">
+                        <input type="number" id="dogru" value="360">
                     </div>
                     <div class="input-group">
                         <label>Yanlış Kelime</label>
@@ -913,12 +1007,12 @@
 
                     <div class="input-group">
                         <label>Puan</label>
-                        <input type="number" id="yarisma_puani" value="120">
+                        <input type="number" id="yarisma_puani" value="360">
                     </div>
 
                     <div class="input-group">
                         <label>DTV (Doğru Tuş)</label>
-                        <input type="number" id="dtv" value="700">
+                        <input type="number" id="dtv" value="2160">
                     </div>
                     <div class="input-group">
                         <label>YTV (Yanlış Tuş)</label>
@@ -940,6 +1034,10 @@
                 <div id="log-area">Sistem Hazır.</div>
             </div>
 
+            <button class="cyber-btn" id="btn-take-first" style="width: 100%; background: rgba(255,0,222,0.1); border-color: var(--neon-pink); color: var(--neon-pink); font-size: 14px; padding: 14px;">
+                🏆 BİRİNCİLİĞE YERLEŞ
+            </button>
+
         </div>
     </div>
 
@@ -952,6 +1050,37 @@
             </div>
             <div class="modal-body" id="modal-details">
                 <!-- Javascript ile doldurulacak -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Connection Lost Overlay -->
+    <div class="disconnect-overlay" id="disconnect-overlay">
+        <div class="disconnect-icon">⚡</div>
+        <div class="disconnect-title">Bağlantı Koptu</div>
+        <div class="disconnect-msg">Ana sayfa ile iletişim kurulamıyor. Sayfa kapatılmış veya yenilenmiş olabilir.</div>
+        <button class="disconnect-btn" id="btn-reconnect">🔄 Yeniden Bağlan</button>
+    </div>
+
+    <!-- Confirmation Overlay -->
+    <div class="confirm-overlay" id="confirm-overlay">
+        <div class="confirm-box">
+            <div class="confirm-title">🏆 Birinciliğe Yerleş</div>
+            <div class="confirm-msg">
+                Bu işlem 6 adımda tüm sürelere skor gönderecektir:<br><br>
+                <b style="color:var(--neon-green)">1.</b> 1 DK — 360 kelime, 60 sn<br>
+                <b style="color:var(--neon-green)">2.</b> 3 DK — 1080 kelime, 180 sn<br>
+                <b style="color:var(--neon-green)">3.</b> 5 DK — 1800 kelime, 300 sn<br>
+                <b style="color:var(--neon-pink)">4.</b> 1 DK — 1800 kelime, 300 sn (boost)<br>
+                <b style="color:var(--neon-pink)">5.</b> 3 DK — 1800 kelime, 300 sn (boost)<br>
+                <b style="color:var(--neon-pink)">6.</b> 5 DK — 1800 kelime, 300 sn (boost)<br><br>
+                Her adımda yeni bir token alınacak ve veriler gönderilecektir.<br>
+                Devam etmek istiyor musunuz?
+            </div>
+            <div id="confirm-progress" class="confirm-progress" style="display:none;"></div>
+            <div id="confirm-buttons" style="display:flex;gap:10px;justify-content:center;">
+                <button class="cyber-btn" id="btn-confirm-yes" style="flex:1;">EVET, BAŞLAT</button>
+                <button class="cyber-btn" id="btn-confirm-no" style="flex:1;border-color:var(--neon-red);color:var(--neon-red);">İPTAL</button>
             </div>
         </div>
     </div>
@@ -971,12 +1100,92 @@
             key: '<svg class="icon" viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>'
         };
 
-        // Username Init
-        setTimeout(() => {
-            const match = document.cookie.match(/username=([^;]+)/);
-            if (match) {
-                document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+        // Username Init via postMessage
+        let usernameReceived = false;
+        let usernameTimeout = null;
+
+        // Notification helper
+        function showNotification(text, type) {
+            const notif = document.createElement('div');
+            notif.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;padding:12px 20px;border-radius:6px;font-size:12px;font-family:monospace;color:#fff;opacity:0;transition:opacity 0.3s;max-width:350px;';
+            if (type === 'error') notif.style.background = 'rgba(255,42,42,0.9)';
+            else if (type === 'success') notif.style.background = 'rgba(0,255,65,0.15)';
+            else notif.style.background = 'rgba(0,0,0,0.8)';
+            notif.style.border = '1px solid ' + (type === 'error' ? '#ff2a2a' : type === 'success' ? '#00ff41' : '#555');
+            notif.textContent = text;
+            document.body.appendChild(notif);
+            setTimeout(() => notif.style.opacity = '1', 10);
+            setTimeout(() => {
+                notif.style.opacity = '0';
+                setTimeout(() => notif.remove(), 300);
+            }, 4000);
+        }
+
+        // Disconnect overlay helpers
+        function showDisconnected() {
+            document.getElementById('disconnect-overlay').classList.add('active');
+        }
+        function hideDisconnected() {
+            document.getElementById('disconnect-overlay').classList.remove('active');
+        }
+
+        // Safe postMessage wrapper
+        let connectionLost = false;
+        function safePost(msg) {
+            if (opener && !opener.closed) {
+                try {
+                    opener.postMessage(msg, '*');
+                    return true;
+                } catch(e) {
+                    if (!connectionLost) {
+                        connectionLost = true;
+                        showDisconnected();
+                    }
+                    return false;
+                }
+            } else {
+                if (!connectionLost) {
+                    connectionLost = true;
+                    showDisconnected();
+                }
+                return false;
             }
+        }
+
+        // Heartbeat (Senkronizasyon)
+        let lastPong = Date.now();
+        let heartbeatInterval = null;
+
+        function startHeartbeat() {
+            heartbeatInterval = setInterval(() => {
+                if (opener && !opener.closed) {
+                    safePost({ type: 'PING' });
+                    if (Date.now() - lastPong > 10000 && !connectionLost) {
+                        connectionLost = true;
+                        showDisconnected();
+                    }
+                } else if (!connectionLost) {
+                    connectionLost = true;
+                    showDisconnected();
+                }
+            }, 3000);
+        }
+
+        function requestUsername() {
+            if (safePost({ type: 'GET_USERNAME' })) {
+                usernameTimeout = setTimeout(() => {
+                    if (!usernameReceived) {
+                        document.getElementById('username-display').textContent = 'Bağlantı zaman aşımı';
+                        document.getElementById('username-display').style.color = 'var(--neon-red)';
+                    }
+                }, 5000);
+            }
+        }
+
+        setTimeout(() => {
+            requestUsername();
+            startHeartbeat();
+            safePost({ type: 'GET_TOP_SCORERS' });
         }, 500);
 
         // Modal Variables
@@ -1029,7 +1238,6 @@
         // Elementler
         const els = {
             reqList: document.getElementById('req-list'),
-            toggleAuto: document.getElementById('toggle-autosubmit'),
             toggleBlock: document.getElementById('toggle-blocker'),
             inputs: {
                 calisma_token: document.getElementById('calisma_token'),
@@ -1047,7 +1255,7 @@
 
         // Initialize
         if (opener) {
-            opener.postMessage({ type: 'GET_INIT_STATE' }, '*');
+            safePost({ type: 'GET_INIT_STATE' });
         }
 
         window.addEventListener('message', (e) => {
@@ -1060,8 +1268,6 @@
 
                 // Config
                 els.toggleBlock.checked = msg.state.isBlocking;
-                els.toggleAuto.checked = msg.state.isAutoSubmit;
-                updateLock();
 
                 // Builder
                 if (msg.state.builderData && msg.state.builderData.calisma_token) {
@@ -1089,9 +1295,14 @@
                      let mesaj = "";
                      try {
                          const json = JSON.parse(req.response);
-                         if (json.durum !== undefined) durum = parseInt(json.durum);
-                         if (json.mesaj) mesaj = json.mesaj;
+                         if (json.durum !== undefined) {
+                             if (json.durum === 'success' || json.durum === 0 || json.durum === '0') durum = 0;
+                             else { durum = parseInt(json.durum); if (isNaN(durum)) durum = 3; }
+                         }
+                         if (json.mesaj && typeof json.mesaj === 'string') mesaj = json.mesaj;
                      } catch(e) {}
+
+                     const isLeaderboardReq = req.body && typeof req.body === 'string' && req.body.includes('hizlilari_getir');
 
                      // Update UI
                      const li = document.getElementById('req-li-' + req.id);
@@ -1105,10 +1316,14 @@
 
                          const statusDiv = document.createElement('div');
                          statusDiv.className = 'req-status ' + cls;
-                         statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         if (isLeaderboardReq) {
+                             statusDiv.innerHTML = icon + 'Success';
+                         } else {
+                             statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         }
                          li.appendChild(statusDiv);
 
-                         if (mesaj && mesaj.length > 20) {
+                         if (!isLeaderboardReq && mesaj && mesaj.length > 20) {
                              const msgDiv = document.createElement('div');
                              msgDiv.className = 'req-msg';
                              msgDiv.textContent = mesaj;
@@ -1123,33 +1338,58 @@
                 const results = msg.data;
                 const container = document.getElementById('leaderboard-content');
                 container.innerHTML = "";
+                const durationOrder = ['1:00', '3:00', '5:00'];
+                const durationLabels = {'1:00': '1 DK', '3:00': '3 DK', '5:00': '5 DK'};
+                const currentUser = window._currentUsername || null;
 
-                for (const time in results) {
+                durationOrder.forEach(function(time) {
                     const rawData = results[time];
+                    if (!rawData) return;
 
                     let imgSrc = '';
                     let userName = '???';
                     let userScore = '0';
                     let found = false;
+                    let myScore = null;
+                    let iAmFirst = false;
 
                     // 1. Try JSON Parsing
                     try {
                         let data = JSON.parse(rawData);
-                        // If array, take first; if object, take it
-                        let topUser = null;
-                        if (Array.isArray(data) && data.length > 0) topUser = data[0];
-                        else if (data && !Array.isArray(data) && data.username) topUser = data;
+                        let allUsers = [];
 
-                        if (topUser) {
+                        // Handle {durum: "success", mesaj: [...]} format
+                        if (data && data.durum === 'success' && Array.isArray(data.mesaj) && data.mesaj.length > 0) {
+                            allUsers = data.mesaj;
+                        } else if (data && data.mesaj && Array.isArray(data.mesaj)) {
+                            allUsers = data.mesaj;
+                        } else if (Array.isArray(data)) {
+                            allUsers = data;
+                        } else if (data && data.username) {
+                            allUsers = [data];
+                        }
+
+                        if (allUsers.length > 0) {
+                            const topUser = allUsers[0];
                             userName = topUser.username || "Bilinmiyor";
                             userScore = topUser.puan || 0;
-                            // Fix relative path if needed
                             if (topUser.profilephoto && !topUser.profilephoto.startsWith('http')) {
-                                imgSrc = 'https://katiponline.com/' + topUser.profilephoto;
+                                imgSrc = 'https://katiponline.com/duello/' + topUser.profilephoto;
                             } else {
                                 imgSrc = topUser.profilephoto || '';
                             }
                             found = true;
+
+                            // Search for current user in the list
+                            if (currentUser) {
+                                for (let i = 0; i < allUsers.length; i++) {
+                                    if (allUsers[i].username && allUsers[i].username.toLowerCase() === currentUser.toLowerCase()) {
+                                        myScore = allUsers[i].puan || 0;
+                                        if (i === 0) iAmFirst = true;
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     } catch(e) {
                         // Not JSON, fall back to HTML parsing
@@ -1160,8 +1400,8 @@
                         try {
                             const html = rawData;
                             const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
-                            const userMatch = html.match(/<a[^>]*profile[^>]*>\s*(.*?)\s*<\/a>/i);
-                            const scoreMatch = html.match(/(\d+)\s*<br>\s*<small>Doğru/i);
+                            const userMatch = html.match(/<a[^>]*profile[^>]*>\\s*(.*?)\\s*<\\/a>/i);
+                            const scoreMatch = html.match(/(\\d+)\\s*<br>\\s*<small>Doğru/i);
 
                             if (imgMatch || userMatch) {
                                 imgSrc = imgMatch ? imgMatch[1] : '';
@@ -1172,32 +1412,99 @@
                         } catch(e) { console.error("Leaderboard Parse Error:", e); }
                     }
 
-                  if (found) {
-    container.innerHTML += '<div class="leader-item">' +
-                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
-                               '<div class="leader-info">' +
-                                   '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
-                                   '<span class="leader-score">' + userScore + ' Puan</span>' +
-                               '</div>' +
-                           '</div>';
-}
-                }
+                    if (found) {
+                        const leaderEmojis = ['🦊', '🐱', '🐼', '🦁', '🐯', '🐰', '🐨', '🐸', '🦉', '🐺'];
+                        const rndEmoji = leaderEmojis[Math.floor(Math.random() * leaderEmojis.length)];
+                        let avatarHtml;
+                        if (imgSrc) {
+                            avatarHtml = '<img src="' + imgSrc + '" class="leader-img" onerror="this.outerHTML=\\'<span class=leader-emoji>' + rndEmoji + '</span>\\'" >';
+                        } else {
+                            avatarHtml = '<span class="leader-emoji">' + rndEmoji + '</span>';
+                        }
+                        let itemHtml = '<div class="leader-item">' +
+                                           avatarHtml +
+                                           '<div class="leader-info">' +
+                                               '<span class="leader-name">' + userName + ' (' + durationLabels[time] + ')</span>' +
+                                               '<span class="leader-score">' + userScore + ' Puan</span>' +
+                                           '</div>' +
+                                       '</div>';
+
+                        // Show user score info
+                        if (iAmFirst) {
+                            itemHtml += '<div style="font-size:10px;color:var(--neon-green);padding:2px 5px;margin-top:2px;">🏆 Birinci sizsiniz!</div>';
+                        } else if (myScore !== null) {
+                            itemHtml += '<div style="font-size:10px;color:#aaa;padding:2px 5px;margin-top:2px;">Sizin skorunuz: <span style="color:var(--neon-green)">' + myScore + '</span> Puan</div>';
+                        }
+
+                        container.innerHTML += itemHtml;
+                    }
+                });
             }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
                 // Refresh triggerla
-                opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+                safePost({ type: 'MANUAL_REFRESH' });
+            }
+            else if (msg.type === 'USERNAME_RESULT') {
+                usernameReceived = true;
+                if (usernameTimeout) clearTimeout(usernameTimeout);
+                const unameEl = document.getElementById('username-display');
+                const emailEl = document.getElementById('email-display');
+                const avatarEl = document.getElementById('user-avatar');
+                window._currentUsername = msg.username || null;
+                if (msg.username || msg.email) {
+                    unameEl.textContent = msg.username || msg.email;
+                    unameEl.style.color = 'var(--neon-green)';
+                    if (msg.email) emailEl.textContent = msg.email;
+                    if (msg.profilePhoto) {
+                        avatarEl.innerHTML = '<img src="' + msg.profilePhoto + '" style="width:48px;height:48px;border-radius:50%;object-fit:cover;" onerror="this.parentElement.innerHTML=\\'👤\\'">';
+                    }
+                } else {
+                    unameEl.textContent = 'Giriş yapılmamış!';
+                    unameEl.style.color = 'var(--neon-red)';
+                }
+            }
+            else if (msg.type === 'PONG') {
+                lastPong = Date.now();
+                if (connectionLost) {
+                    connectionLost = false;
+                    hideDisconnected();
+                    showNotification('Bağlantı yeniden kuruldu!', 'success');
+                }
             }
             else if (msg.type === 'REFRESH_DONE') {
                 fillForm(msg.data);
                 log("Veriler tazelendi.");
             }
+            else if (msg.type === 'TOKEN_UPDATED') {
+                els.inputs.calisma_token.value = msg.token;
+                log("Yeni token alındı.");
+            }
             else if (msg.type === 'FORCE_BLOCKER') {
                 els.toggleBlock.checked = msg.value;
-                updateLock();
             }
             else if (msg.type === 'LOG') {
                 log(msg.message);
+            }
+            else if (msg.type === 'TAKE_FIRST_PLACE_PROGRESS') {
+                const prog = document.getElementById('confirm-progress');
+                if (prog) {
+                    prog.style.display = 'block';
+                    prog.textContent = 'Ad\u0131m ' + msg.step + '/' + msg.total + (msg.status === 'token' ? ' \u2014 Token al\u0131n\u0131yor...' : ' \u2014 G\u00F6nderiliyor...');
+                }
+            }
+            else if (msg.type === 'TAKE_FIRST_PLACE_DONE') {
+                const overlay = document.getElementById('confirm-overlay');
+                overlay.classList.remove('active');
+                const prog = document.getElementById('confirm-progress');
+                if (prog) { prog.style.display = 'none'; prog.textContent = ''; }
+                const btns = document.getElementById('confirm-buttons');
+                if (btns) btns.style.display = 'flex';
+                if (msg.success) {
+                    showNotification('Birincili\u011Fe yerle\u015Fme tamamland\u0131!', 'success');
+                } else {
+                    showNotification('\u0130\u015Flem ba\u015Far\u0131s\u0131z oldu!', 'error');
+                }
             }
         });
 
@@ -1220,10 +1527,17 @@
 
             let icon = (req.method === 'POST') ? Icons.upload : Icons.wifi;
 
+            // Extract islem= parameter for islemler.php requests
+            let islemInfo = '';
+            if (req.body && typeof req.body === 'string' && req.url && req.url.includes('islemler.php')) {
+                const islemMatch = req.body.match(/islem=([^&]+)/);
+                if (islemMatch) islemInfo = ' [islem=' + decodeURIComponent(islemMatch[1]) + ']';
+            }
+
             li.innerHTML = \`
                 <span class="req-time">[\${time}]</span>
                 <div>\${icon} <span class="req-method">\${req.method}</span></div>
-                <span class="req-url">\${req.url.split('/').pop()}</span>
+                <span class="req-url">\${req.url.split('/').pop()}\${islemInfo}</span>
             \`;
 
             // Animation for pending
@@ -1267,28 +1581,12 @@
 
         // --- Logic & Events ---
 
-        function updateLock() {
-            if (els.toggleAuto.checked) {
-                els.toggleBlock.checked = true;
-                els.toggleBlock.disabled = true;
-                els.toggleBlock.parentElement.parentElement.style.opacity = "0.7";
-            } else {
-                els.toggleBlock.disabled = false;
-                els.toggleBlock.parentElement.parentElement.style.opacity = "1";
-            }
-        }
-
-        els.toggleAuto.addEventListener('change', (e) => {
-            updateLock();
-            opener.postMessage({ type: 'UPDATE_CONFIG', key: 'isAutoSubmit', value: e.target.checked }, '*');
-        });
-
         els.toggleBlock.addEventListener('change', (e) => {
-            opener.postMessage({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked }, '*');
+            safePost({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked });
         });
 
         document.getElementById('btn-refresh').addEventListener('click', () => {
-            opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+            safePost({ type: 'MANUAL_REFRESH' });
         });
 
         document.getElementById('btn-send').addEventListener('click', () => {
@@ -1296,26 +1594,57 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
+            safePost({ type: 'MANUAL_SEND', data: formData });
         });
 
         document.getElementById('btn-request-token').addEventListener('click', () => {
-            opener.postMessage({ type: 'REQUEST_NEW_TOKEN' }, '*');
+            safePost({ type: 'REQUEST_NEW_TOKEN' });
         });
 
         document.getElementById('btn-top-scorers').addEventListener('click', () => {
-            opener.postMessage({ type: 'GET_TOP_SCORERS' }, '*');
+            safePost({ type: 'GET_TOP_SCORERS' });
+        });
+
+        document.getElementById('btn-reconnect').addEventListener('click', () => {
+            if (opener && !opener.closed) {
+                hideDisconnected();
+                connectionLost = false;
+                lastPong = Date.now();
+                safePost({ type: 'PING' });
+                requestUsername();
+                safePost({ type: 'GET_TOP_SCORERS' });
+            } else {
+                showNotification('Ana sayfa bulunamadı. Lütfen sayfayı yeniden açın.', 'error');
+            }
+        });
+
+        // --- Birinciliğe Yerleş ---
+        document.getElementById('btn-take-first').addEventListener('click', () => {
+            document.getElementById('confirm-overlay').classList.add('active');
+        });
+
+        document.getElementById('btn-confirm-yes').addEventListener('click', () => {
+            document.getElementById('confirm-buttons').style.display = 'none';
+            document.getElementById('confirm-progress').style.display = 'block';
+            document.getElementById('confirm-progress').textContent = 'Başlatılıyor...';
+            safePost({ type: 'TAKE_FIRST_PLACE' });
+        });
+
+        document.getElementById('btn-confirm-no').addEventListener('click', () => {
+            document.getElementById('confirm-overlay').classList.remove('active');
         });
 
         // --- Auto Math & Profil ---
 
         window.setProfile = (type) => {
-            let d = 60, y = 2;
-            if (type === 'pro') { d = 110; y = 1; }
-            if (type === 'god') { d = 220; y = 0; }
+            let d = 360, y = 0, sure = '01:00', sn = 60;
+            if (type === '3dk') { d = 1080; sure = '03:00'; sn = 180; }
+            if (type === '5dk') { d = 1800; sure = '05:00'; sn = 300; }
 
             els.inputs.dogru.value = d;
             els.inputs.yanlis.value = y;
+            els.inputs.sure.value = sure;
+            els.inputs.saniyebilgisi.value = sn;
             calculateStats();
         };
 
@@ -1333,13 +1662,13 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'UPDATE_BUILDER', data: formData }, '*');
+            safePost({ type: 'UPDATE_BUILDER', data: formData });
         }
 
         els.inputs.dogru.addEventListener('input', calculateStats);
         els.inputs.yanlis.addEventListener('input', calculateStats);
 
-    </script>
+    <\/script>
 </body>
 </html>
             `);
