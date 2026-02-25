@@ -96,7 +96,10 @@
                 }
 
                 if (!isBypass) {
-                    self.logRequest('XHR', this._method, url, body, false);
+                    const reqId = self.logRequest('XHR', this._method, url, body, false);
+                    xhr.addEventListener('load', function() {
+                        self.updateRequestResponse(reqId, this.responseText);
+                    });
                 }
 
                 return originalXHRSend.apply(this, arguments);
@@ -127,8 +130,9 @@
                     }
                 }
 
+                let reqId = null;
                 if (!isBypass) {
-                    self.logRequest('FETCH', method, url, body, false);
+                    reqId = self.logRequest('FETCH', method, url, body, false);
                 }
 
                 try {
@@ -138,6 +142,13 @@
                     if (url.includes('islemler.php')) {
                         clone.text().then(text => self.processStartResponse(text));
                     }
+
+                    if (reqId !== null) {
+                        response.clone().text().then(text => {
+                            self.updateRequestResponse(reqId, text);
+                        });
+                    }
+
                     return response;
                 } catch (err) {
                     throw err;
@@ -187,7 +198,8 @@
             const reqData = {
                 id: Date.now() + Math.random(), // Unique ID
                 type, method, url, body, blocked,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                response: null
             };
             this.state.requests.unshift(reqData); // En başa ekle
 
@@ -196,6 +208,19 @@
                 type: 'NEW_REQUEST',
                 request: reqData
             });
+            return reqData.id;
+        },
+
+        updateRequestResponse: function(reqId, responseText) {
+            const req = this.state.requests.find(r => r.id === reqId);
+            if (req) {
+                req.response = responseText;
+                this.broadcast({
+                    type: 'UPDATE_REQUEST_RESPONSE',
+                    reqId: reqId,
+                    response: responseText
+                });
+            }
         },
 
         // Helper: Auto-Submit Tetikleyici
@@ -224,6 +249,8 @@
                 params.append(key, payload[key]);
             }
 
+            const submitReqId = this.logRequest('FETCH', 'POST', 'sonuckaydet.php', params.toString(), false);
+
             window.fetch('https://katiponline.com/klavye-hiz-testi/sonuckaydet.php', {
                 method: 'POST',
                 headers: {
@@ -231,12 +258,46 @@
                     'X-Bypass-Interceptor': 'true'
                 },
                 body: params.toString()
-            }).then(res => res.text()).then(text => {
+            }).then(res => {
+                const clone = res.clone();
+                return clone.text();
+            }).then(text => {
+                this.updateRequestResponse(submitReqId, text);
                 console.log("GhostKernel: Auto-Submit BAŞARILI!", text);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER BAŞARILI!" });
             }).catch(err => {
                 console.error("GhostKernel: Auto-Submit HATASI", err);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER HATASI!" });
+            });
+        },
+
+        // Helper: Token İsteyici
+        requestToken: function() {
+            const self = this;
+            console.log("GhostKernel: Token isteniyor...");
+
+            const params = new URLSearchParams();
+            params.append('islem', 'calisma_baslat');
+
+            const reqId = this.logRequest('FETCH', 'POST', 'islemler.php', params.toString(), false);
+
+            window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Bypass-Interceptor': 'true'
+                },
+                body: params.toString()
+            }).then(res => {
+                const clone = res.clone();
+                return clone.text();
+            }).then(text => {
+                self.updateRequestResponse(reqId, text);
+                self.processStartResponse(text);
+                self.broadcast({ type: 'LOG', message: "Token alındı!" });
+            }).catch(err => {
+                console.error("GhostKernel: Token isteği hatası", err);
+                self.broadcast({ type: 'LOG', message: "Token isteği HATASI!" });
             });
         },
 
@@ -316,6 +377,9 @@
                     // Manuel gönder butonu (Target Page'den)
                     this.state.builderData = msg.data; // Son veriyi al
                     this.triggerAutoSubmit();
+                    break;
+                case 'REQUEST_TOKEN':
+                    this.requestToken();
                     break;
             }
         },
@@ -632,6 +696,40 @@
             font-size: 11px; color: #aaa; margin-top: 10px; height: 20px; overflow: hidden; white-space: nowrap;
         }
 
+        /* Detail Modal */
+        #detail-modal {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.85); z-index: 1000;
+            justify-content: center; align-items: center;
+            padding: 20px; box-sizing: border-box;
+        }
+        #detail-modal .glass-panel {
+            max-width: 650px; width: 100%; max-height: 90vh;
+            overflow-y: auto; position: relative;
+        }
+        .detail-close {
+            position: absolute; top: 10px; right: 15px;
+            background: transparent; border: 1px solid var(--neon-red);
+            color: var(--neon-red); cursor: pointer; font-size: 14px;
+            padding: 2px 8px; border-radius: 4px; transition: 0.3s;
+        }
+        .detail-close:hover { background: var(--neon-red); color: #fff; }
+        .detail-label { color: #888; font-size: 11px; text-transform: uppercase; margin-bottom: 4px; }
+        .detail-pre {
+            background: rgba(0,0,0,0.5); padding: 10px; border-radius: 4px;
+            white-space: pre-wrap; word-break: break-all;
+            max-height: 200px; overflow-y: auto; font-size: 12px;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Token Request Button */
+        .token-btn {
+            border-color: var(--neon-pink); color: var(--neon-pink);
+            font-size: 10px; padding: 2px 8px;
+        }
+        .token-btn:hover { background: var(--neon-pink); color: #fff; box-shadow: 0 0 10px var(--neon-pink); }
+
     </style>
 </head>
 <body>
@@ -686,9 +784,12 @@
                 </div>
 
                 <div class="form-grid" id="builder-form">
-                    <div class="input-group full-width">
+                    <div class="input-group full-width" style="position: relative;">
                         <label>Çalışma Token</label>
-                        <input type="text" id="calisma_token" readonly style="opacity: 0.7;">
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="calisma_token" readonly style="opacity: 0.7; flex: 1;">
+                            <button class="cyber-btn token-btn" id="btn-request-token" type="button">TOKEN İSTE</button>
+                        </div>
                     </div>
 
                     <div class="input-group">
@@ -705,17 +806,25 @@
                         <input type="text" id="sure" value="01:00">
                     </div>
                     <div class="input-group">
+                        <label>Süre (saniye)</label>
+                        <input type="number" id="saniyebilgisi" value="60">
+                    </div>
+
+                    <div class="input-group">
                         <label>Puan</label>
                         <input type="number" id="yarisma_puani" value="120">
                     </div>
-
                     <div class="input-group">
                         <label>DTV (Doğru Tuş)</label>
                         <input type="number" id="dtv" value="700">
                     </div>
+
                     <div class="input-group">
                         <label>YTV (Yanlış Tuş)</label>
                         <input type="number" id="ytv" value="0">
+                    </div>
+                    <div class="input-group">
+                        <!-- Boş hücre grid hizalama için -->
                     </div>
 
                     <div class="input-group full-width">
@@ -724,7 +833,6 @@
                     </div>
 
                     <!-- Gizli alanlar -->
-                    <input type="hidden" id="saniyebilgisi" value="60">
                     <input type="hidden" id="metingrububilgisi" value="">
                     <input type="hidden" id="baslik" value="">
                     <input type="hidden" id="imla" value="">
@@ -737,25 +845,39 @@
         </div>
     </div>
 
+    <!-- DETAIL MODAL -->
+    <div id="detail-modal">
+        <div class="glass-panel">
+            <span class="panel-title">İSTEK DETAYI</span>
+            <button class="detail-close" onclick="closeDetail()">✕</button>
+            <div id="detail-content" style="margin-top: 20px;"></div>
+        </div>
+    </div>
+
     <script>
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
+
+        // Request data store (for detail view)
+        const requestStore = {};
 
         // Elementler
         const els = {
             reqList: document.getElementById('req-list'),
             toggleAuto: document.getElementById('toggle-autosubmit'),
             toggleBlock: document.getElementById('toggle-blocker'),
+            detailModal: document.getElementById('detail-modal'),
+            detailContent: document.getElementById('detail-content'),
             inputs: {
                 calisma_token: document.getElementById('calisma_token'),
                 dogru: document.getElementById('dogru'),
                 yanlis: document.getElementById('yanlis'),
                 sure: document.getElementById('sure'),
+                saniyebilgisi: document.getElementById('saniyebilgisi'),
                 yarisma_puani: document.getElementById('yarisma_puani'),
                 dtv: document.getElementById('dtv'),
                 ytv: document.getElementById('ytv'),
-                metin: document.getElementById('metin'),
-                saniyebilgisi: document.getElementById('saniyebilgisi')
+                metin: document.getElementById('metin')
             },
             log: document.getElementById('log-area')
         };
@@ -802,6 +924,11 @@
             else if (msg.type === 'LOG') {
                 log(msg.message);
             }
+            else if (msg.type === 'UPDATE_REQUEST_RESPONSE') {
+                if (requestStore[msg.reqId]) {
+                    requestStore[msg.reqId].response = msg.response;
+                }
+            }
         });
 
         // --- FONKSİYONLAR ---
@@ -815,6 +942,9 @@
         function addRequest(req) {
             if (req.method !== 'POST' && !req.blocked) return; // Filtrele
 
+            // Store request data for detail view
+            requestStore[req.id] = { ...req };
+
             const li = document.createElement('li');
             li.className = 'req-item' + (req.blocked ? ' blocked' : '');
             const time = new Date(req.timestamp).toLocaleTimeString();
@@ -825,14 +955,61 @@
                 <span class="req-url">\${req.url.split('/').pop()}</span>
             \`;
 
-            // Tıklayınca payload göster (ileride detay modalı eklenebilir)
             li.onclick = () => {
-                console.log(req.body);
-                log("Payload konsola yazıldı.");
+                showDetail(requestStore[req.id]);
             };
 
             els.reqList.prepend(li);
         }
+
+        function showDetail(req) {
+            let bodyDisplay = req.body || '(boş)';
+            try {
+                if (typeof bodyDisplay === 'string' && bodyDisplay.includes('=')) {
+                    const params = new URLSearchParams(bodyDisplay);
+                    let formatted = '';
+                    for (const [key, val] of params) {
+                        formatted += key + ': ' + val + '\\n';
+                    }
+                    if (formatted) bodyDisplay = formatted;
+                }
+            } catch(e) {}
+
+            let html = '<div>';
+            html += '<div style="margin-bottom:10px;">';
+            html += '<span style="color:' + (req.blocked ? 'var(--neon-red)' : 'var(--neon-green)') + '; font-weight:bold;">';
+            html += req.blocked ? 'BLOKLANDI' : 'GÖNDERİLDİ';
+            html += '</span>';
+            html += '<span style="color:#888; margin-left:10px;">' + new Date(req.timestamp).toLocaleString() + '</span>';
+            html += '</div>';
+
+            html += '<div style="margin-bottom:10px;">';
+            html += '<span style="font-weight:bold; color:var(--neon-pink);">' + req.type + ' ' + req.method + '</span> ';
+            html += '<span style="color:var(--neon-green); word-break:break-all;">' + req.url + '</span>';
+            html += '</div>';
+
+            html += '<div style="margin-bottom:10px;">';
+            html += '<div class="detail-label">Payload</div>';
+            html += '<pre class="detail-pre" style="color:var(--neon-green);">' + bodyDisplay + '</pre>';
+            html += '</div>';
+
+            if (req.response) {
+                html += '<div>';
+                html += '<div class="detail-label">Yanıt (Response)</div>';
+                html += '<pre class="detail-pre" style="color:var(--neon-pink);">' + req.response + '</pre>';
+                html += '</div>';
+            } else {
+                html += '<div style="color:#666; font-size:12px;">Yanıt mevcut değil.</div>';
+            }
+
+            html += '</div>';
+            els.detailContent.innerHTML = html;
+            els.detailModal.style.display = 'flex';
+        }
+
+        window.closeDetail = function() {
+            els.detailModal.style.display = 'none';
+        };
 
         function fillForm(data) {
             for (const key in data) {
@@ -867,6 +1044,11 @@
 
         document.getElementById('btn-refresh').addEventListener('click', () => {
             opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+        });
+
+        document.getElementById('btn-request-token').addEventListener('click', () => {
+            opener.postMessage({ type: 'REQUEST_TOKEN' }, '*');
+            log("Token isteniyor...");
         });
 
         document.getElementById('btn-send').addEventListener('click', () => {
@@ -908,6 +1090,33 @@
 
         els.inputs.dogru.addEventListener('input', calculateStats);
         els.inputs.yanlis.addEventListener('input', calculateStats);
+
+        // --- Süre Senkronizasyonu ---
+        els.inputs.sure.addEventListener('input', () => {
+            const parts = els.inputs.sure.value.split(':');
+            if (parts.length === 2) {
+                const mins = parseInt(parts[0]) || 0;
+                const secs = parseInt(parts[1]) || 0;
+                els.inputs.saniyebilgisi.value = mins * 60 + secs;
+                syncBuilderData();
+            }
+        });
+
+        els.inputs.saniyebilgisi.addEventListener('input', () => {
+            const totalSec = parseInt(els.inputs.saniyebilgisi.value) || 0;
+            const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
+            const s = (totalSec % 60).toString().padStart(2, '0');
+            els.inputs.sure.value = m + ':' + s;
+            syncBuilderData();
+        });
+
+        function syncBuilderData() {
+            const formData = {};
+            document.querySelectorAll('#builder-form input').forEach(inp => {
+                formData[inp.id] = inp.value;
+            });
+            opener.postMessage({ type: 'UPDATE_BUILDER', data: formData }, '*');
+        }
 
     </script>
 </body>
