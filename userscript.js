@@ -412,7 +412,42 @@
                 case 'REQUEST_NEW_TOKEN':
                     this.requestNewToken();
                     break;
+                case 'GET_TOP_SCORERS':
+                    this.fetchTopScorers();
+                    break;
             }
+        },
+
+        fetchTopScorers: function() {
+            const durations = ['1:00', '3:00', '5:00'];
+            const results = {};
+            let completed = 0;
+
+            durations.forEach(sure => {
+                const params = new URLSearchParams();
+                params.append('islem', 'hizlilari_getir');
+                params.append('sure', sure);
+                params.append('tarih', 'hepsi');
+
+                window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                    body: params.toString()
+                })
+                .then(res => res.text())
+                .then(text => {
+                    results[sure] = text;
+                })
+                .catch(err => {
+                    results[sure] = "Error";
+                })
+                .finally(() => {
+                    completed++;
+                    if (completed === durations.length) {
+                        this.broadcast({ type: 'TOP_SCORERS_RESULT', data: results });
+                    }
+                });
+            });
         },
 
         injectTriggerButton: function() {
@@ -633,6 +668,30 @@
         .req-time { color: #666; font-size: 10px; margin-bottom: 3px; display: block; }
         .req-method { font-weight: bold; margin-right: 5px; }
         .req-url { color: var(--neon-green); word-break: break-all; }
+        .req-status { font-weight: bold; font-size: 11px; margin-top: 5px; }
+        .req-msg { font-size: 10px; color: #aaa; margin-top: 2px; white-space: pre-wrap; }
+
+        .status-success { color: var(--neon-green); }
+        .status-warn { color: yellow; }
+        .status-error { color: var(--neon-red); }
+        .status-unknown { color: cyan; }
+
+        .icon { width: 14px; height: 14px; fill: currentColor; vertical-align: middle; margin-right: 5px; }
+        .icon.large { width: 18px; height: 18px; }
+
+        /* Leaderboard */
+        .leaderboard {
+            padding: 10px; border-top: 1px solid var(--border);
+            font-size: 11px; display: flex; flex-direction: column; gap: 5px;
+        }
+        .leader-item {
+            display: flex; align-items: center; gap: 10px;
+            background: rgba(255,255,255,0.05); padding: 5px; border-radius: 4px;
+        }
+        .leader-img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+        .leader-info { display: flex; flex-direction: column; }
+        .leader-name { font-weight: bold; color: var(--neon-pink); }
+        .leader-score { color: var(--neon-green); }
 
         /* Main Content (Builder) */
         .main {
@@ -763,14 +822,29 @@
     <div class="app-container">
         <!-- SIDEBAR -->
         <div class="sidebar">
-            <div class="sidebar-header">AĞ İZLEME GEÇMİŞİ</div>
+            <div class="sidebar-header">
+                <svg class="icon large" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-.61.08-1.21.21-1.78L8.99 15v1c0 1.1.9 2 2 2v1.93C7.06 19.43 4 16.07 4 12zm13.89 5.4c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41C17.92 5.77 20 8.65 20 12c0 2.05-.81 3.93-2.11 5.4z"/></svg>
+                AĞ İZLEME GEÇMİŞİ
+            </div>
             <ul id="req-list">
                 <!-- İstekler buraya gelecek -->
             </ul>
+
+            <div class="leaderboard" id="leaderboard-area">
+                <button class="cyber-btn" id="btn-top-scorers" style="margin-top:0; font-size:10px; padding:5px;">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M20.2 2H3.8c-1.1 0-1.9.9-1.8 1.9.9 7.7 7.4 13.6 15 13.6s14.1-5.9 15-13.6c.1-1.1-.7-2-1.8-1.9zM7 7.5c-.8 0-1.5-.7-1.5-1.5s.7-1.5 1.5-1.5 1.5.7 1.5 1.5-.7 1.5-1.5 1.5zM12 13c-2.2 0-4-1.8-4-4s1.8-4 4-4 4 1.8 4 4-1.8 4-4 4zm7-5.5c-.8 0-1.5-.7-1.5-1.5s.7-1.5 1.5-1.5 1.5.7 1.5 1.5-.7 1.5-1.5 1.5zM6 19h12v2H6z"/></svg>
+                    BİRİNCİLERİ GETİR
+                </button>
+                <div id="leaderboard-content"></div>
+            </div>
         </div>
 
         <!-- MAIN -->
         <div class="main">
+
+            <div style="margin-bottom: 10px; font-size: 12px; color: #888;">
+                Giriş yapıldı: <span id="username-display" style="color: var(--neon-green); font-weight: bold;">...</span>
+            </div>
 
             <!-- AYARLAR -->
             <div class="glass-panel">
@@ -886,6 +960,25 @@
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
 
+        // ICONS (SVG)
+        const Icons = {
+            wifi: '<svg class="icon" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>',
+            upload: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>',
+            check: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>',
+            warn: '<svg class="icon" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
+            error: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"/></svg>',
+            unknown: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>',
+            key: '<svg class="icon" viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>'
+        };
+
+        // Username Init
+        setTimeout(() => {
+            const match = document.cookie.match(/username=([^;]+)/);
+            if (match) {
+                document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+            }
+        }, 500);
+
         // Modal Variables
         const modal = document.getElementById('request-modal');
         const modalBody = document.getElementById('modal-details');
@@ -983,8 +1076,102 @@
                  if (req) {
                      req.response = msg.response;
                      req.status = msg.status;
+
+                     // Stop Animation
+                     if (req.animEl) {
+                         clearInterval(req.animInterval);
+                         req.animEl.remove();
+                         req.animEl = null;
+                     }
+
+                     // Parse Status & Message
+                     let durum = 3;
+                     let mesaj = "";
+                     try {
+                         const json = JSON.parse(req.response);
+                         if (json.durum !== undefined) durum = parseInt(json.durum);
+                         if (json.mesaj) mesaj = json.mesaj;
+                     } catch(e) {}
+
+                     // Update UI
+                     const li = document.getElementById('req-li-' + req.id);
+                     if (li) {
+                         let icon = Icons.unknown;
+                         let cls = 'status-unknown';
+
+                         if (durum === 0) { icon = Icons.check; cls = 'status-success'; }
+                         else if (durum === 1) { icon = Icons.warn; cls = 'status-warn'; }
+                         else if (durum >= 2) { icon = Icons.error; cls = 'status-error'; }
+
+                         const statusDiv = document.createElement('div');
+                         statusDiv.className = 'req-status ' + cls;
+                         statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         li.appendChild(statusDiv);
+
+                         if (mesaj && mesaj.length > 20) {
+                             const msgDiv = document.createElement('div');
+                             msgDiv.className = 'req-msg';
+                             msgDiv.textContent = mesaj;
+                             li.appendChild(msgDiv);
+                         }
+                     }
+
                      if (currentOpenReqId === msg.id) showModal(msg.id);
                  }
+            }
+            else if (msg.type === 'TOP_SCORERS_RESULT') {
+                const results = msg.data;
+                const container = document.getElementById('leaderboard-content');
+                container.innerHTML = "";
+
+                for (const time in results) {
+                    const html = results[time];
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+
+                    // Katiponline yapısına göre parse et (genelde table veya list)
+                    // Varsayım: İlk satır veya liste elemanı birinci
+                    // Örnek yapı: <tr><td><img src..></td><td>Isim</td><td>Puan</td></tr>
+                    // Veya div yapısı.
+                    // Güvenli regex ile çekmeyi deneyelim çünkü DOM yapısı değişken olabilir.
+
+                    // Regex ile birinciyi bulmaya çalışalım
+                    // Genellikle: <img src="..."> ... <span>KullanıcıAdi</span> ... <span>Puan</span>
+
+                    // Basit parse denemesi
+                    try {
+                        const row = doc.querySelector('tr') || doc.querySelector('li') || doc.querySelector('.siralama-satir');
+                        if (row) {
+                            const img = row.querySelector('img') ? row.querySelector('img').src : '';
+                            const name = row.innerText.split('\\n')[1] || "Bilinmiyor"; // Kaba tahmin
+                            const score = row.innerText.match(/(\\d+)\\s*(puan|vuruş|kelime)/i);
+
+                            // Daha sağlam regex
+                            // kullanici_resim...src="(...)"...
+                            // ...kullanici_adi...>(...)<...
+
+                            // HTML string üzerinden regex
+                            const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
+                            const userMatch = html.match(/<a[^>]*profile[^>]*>\\s*(.*?)\\s*<\\/a>/i); // Profile linkinden isim
+                            // Puan genellikle kalın veya belirgin
+                            const scoreMatch = html.match(/(\\d+)\\s*<br>\\s*<small>Doğru/i); // 120 <br> <small>Doğru
+
+                            const imgSrc = imgMatch ? imgMatch[1] : '';
+                            const userName = userMatch ? userMatch[1] : '???';
+                            const userScore = scoreMatch ? scoreMatch[1] : '0';
+
+                            container.innerHTML += \`
+                                <div class="leader-item">
+                                    <img src="\${imgSrc}" class="leader-img">
+                                    <div class="leader-info">
+                                        <span class="leader-name">\${userName} (\${time})</span>
+                                        <span class="leader-score">\${userScore} Doğru</span>
+                                    </div>
+                                </div>
+                            \`;
+                        }
+                    } catch(e) { console.error(e); }
+                }
             }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
@@ -1017,14 +1204,40 @@
             if (req.method !== 'POST' && !req.blocked) return; // Filtrele
 
             const li = document.createElement('li');
+            li.id = 'req-li-' + req.id;
             li.className = 'req-item' + (req.blocked ? ' blocked' : '');
             const time = new Date(req.timestamp).toLocaleTimeString();
 
+            let icon = (req.method === 'POST') ? Icons.upload : Icons.wifi;
+
             li.innerHTML = \`
                 <span class="req-time">[\${time}]</span>
-                <span class="req-method">\${req.method}</span>
+                <div>\${icon} <span class="req-method">\${req.method}</span></div>
                 <span class="req-url">\${req.url.split('/').pop()}</span>
             \`;
+
+            // Animation for pending
+            if (!req.blocked) {
+                const animDiv = document.createElement('div');
+                animDiv.style.color = '#aaa';
+                animDiv.style.fontSize = '10px';
+                animDiv.style.marginTop = '5px';
+                animDiv.innerText = '(>_<)';
+                li.appendChild(animDiv);
+
+                req.animEl = animDiv;
+                let frame = 0;
+                const frames = ['(>_<)', '((>_<))', '(((>_<)))', '((>_<))'];
+                req.animInterval = setInterval(() => {
+                    frame = (frame + 1) % frames.length;
+                    animDiv.innerText = frames[frame];
+                }, 200);
+            } else {
+                 const blockDiv = document.createElement('div');
+                 blockDiv.className = 'req-status status-error';
+                 blockDiv.innerHTML = Icons.error + "BLOCKED";
+                 li.appendChild(blockDiv);
+            }
 
             li.onclick = () => {
                 showModal(req.id);
@@ -1078,6 +1291,10 @@
 
         document.getElementById('btn-request-token').addEventListener('click', () => {
             opener.postMessage({ type: 'REQUEST_NEW_TOKEN' }, '*');
+        });
+
+        document.getElementById('btn-top-scorers').addEventListener('click', () => {
+            opener.postMessage({ type: 'GET_TOP_SCORERS' }, '*');
         });
 
         // --- Auto Math & Profil ---
