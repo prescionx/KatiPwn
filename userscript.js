@@ -77,7 +77,7 @@
                         console.warn(`GhostKernel: Orijinal istek BLOKLANDI! -> ${url}`);
 
                         // Logla
-                        self.logRequest('XHR', 'POST', url, body, true); // Blocked = true
+                        self.logRequest('XHR', 'POST', url, body, true, null, 'BLOKLANDI'); // Blocked = true
 
                         // Auto-Submit Tetikleyicisi (PUSU MANTIĞI)
                         if (self.state.isAutoSubmit) {
@@ -95,8 +95,19 @@
                     }
                 }
 
-                if (!isBypass) {
-                    self.logRequest('XHR', this._method, url, body, false);
+                let reqId = null;
+                if (!isBypass && this._method === 'POST') {
+                    reqId = self.logRequest('XHR', this._method, url, body, false, null, 'YAKALANDI');
+                }
+
+                if (reqId) {
+                    this.addEventListener('load', function() {
+                        self.updateRequestLog(reqId, {
+                            response: this.responseText,
+                            status: this.status,
+                            event: 'GÖNDERİLDİ'
+                        });
+                    });
                 }
 
                 return originalXHRSend.apply(this, arguments);
@@ -117,7 +128,7 @@
                 if (url.includes('sonuckaydet.php') && !isBypass) {
                     if (self.state.isBlocking || self.state.isAutoSubmit) {
                         console.warn(`GhostKernel: Fetch isteği BLOKLANDI! -> ${url}`);
-                        self.logRequest('FETCH', method, url, body, true);
+                        self.logRequest('FETCH', method, url, body, true, null, 'BLOKLANDI');
 
                         if (self.state.isAutoSubmit) {
                             self.triggerAutoSubmit();
@@ -127,19 +138,31 @@
                     }
                 }
 
-                if (!isBypass) {
-                    self.logRequest('FETCH', method, url, body, false);
+                let reqId = null;
+                if (!isBypass && method === 'POST') {
+                    reqId = self.logRequest('FETCH', method, url, body, false, null, 'YAKALANDI');
                 }
 
                 try {
                     const response = await originalFetch.apply(this, arguments);
                     const clone = response.clone();
-
-                    if (url.includes('islemler.php')) {
-                        clone.text().then(text => self.processStartResponse(text));
+                    if (reqId || url.includes('islemler.php')) {
+                        clone.text().then(text => {
+                            if (url.includes('islemler.php')) self.processStartResponse(text);
+                            if (reqId) {
+                                self.updateRequestLog(reqId, {
+                                    response: text,
+                                    status: response.status,
+                                    event: 'GÖNDERİLDİ'
+                                });
+                            }
+                        });
                     }
                     return response;
                 } catch (err) {
+                    if (reqId) {
+                        self.updateRequestLog(reqId, { response: String(err), event: 'HATA' });
+                    }
                     throw err;
                 }
             };
@@ -183,10 +206,13 @@
             }
         },
 
-        logRequest: function(type, method, url, body, blocked) {
+        logRequest: function(type, method, url, body, blocked, response, eventLabel) {
             const reqData = {
                 id: Date.now() + Math.random(), // Unique ID
                 type, method, url, body, blocked,
+                response: response || null,
+                status: null,
+                event: eventLabel || (blocked ? 'BLOKLANDI' : 'YAKALANDI'),
                 timestamp: Date.now()
             };
             this.state.requests.unshift(reqData); // En başa ekle
@@ -195,6 +221,17 @@
             this.broadcast({
                 type: 'NEW_REQUEST',
                 request: reqData
+            });
+            return reqData.id;
+        },
+
+        updateRequestLog: function(id, patch) {
+            const req = this.state.requests.find(r => r.id === id);
+            if (!req) return;
+            Object.assign(req, patch);
+            this.broadcast({
+                type: 'UPDATE_REQUEST',
+                request: req
             });
         },
 
@@ -237,6 +274,21 @@
             }).catch(err => {
                 console.error("GhostKernel: Auto-Submit HATASI", err);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER HATASI!" });
+            });
+        },
+
+        requestWorkToken: function() {
+            window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: 'islem=calisma_baslat'
+            }).then(res => res.text()).then(text => {
+                this.broadcast({ type: 'LOG', message: "Çalışma tokeni alındı." });
+            }).catch(err => {
+                console.error("GhostKernel: Çalışma tokeni alınamadı", err);
+                this.broadcast({ type: 'LOG', message: "Çalışma tokeni alınamadı." });
             });
         },
 
@@ -316,6 +368,9 @@
                     // Manuel gönder butonu (Target Page'den)
                     this.state.builderData = msg.data; // Son veriyi al
                     this.triggerAutoSubmit();
+                    break;
+                case 'REQUEST_TOKEN':
+                    this.requestWorkToken();
                     break;
             }
         },
@@ -508,6 +563,7 @@
         .req-time { color: #666; font-size: 10px; margin-bottom: 3px; display: block; }
         .req-method { font-weight: bold; margin-right: 5px; }
         .req-url { color: var(--neon-green); word-break: break-all; }
+        .req-event { display: inline-block; margin-top: 4px; font-size: 10px; color: #bbb; }
 
         /* Main Content (Builder) */
         .main {
@@ -631,6 +687,18 @@
         #log-area {
             font-size: 11px; color: #aaa; margin-top: 10px; height: 20px; overflow: hidden; white-space: nowrap;
         }
+        .modal {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+            display: none; align-items: center; justify-content: center; z-index: 9999;
+        }
+        .modal-content {
+            width: 80%; max-height: 80vh; overflow: auto; background: #080808;
+            border: 1px solid var(--neon-pink); border-radius: 8px; padding: 15px;
+        }
+        .modal-content pre {
+            white-space: pre-wrap; word-break: break-word; background: rgba(255,255,255,0.04); padding: 10px;
+        }
+        .close-modal { float: right; margin-top: 0; }
 
     </style>
 </head>
@@ -682,7 +750,10 @@
                         <span class="badge" onclick="setProfile('pro')">PRO (110)</span>
                         <span class="badge" onclick="setProfile('god')">GOD (200+)</span>
                     </div>
-                    <button class="cyber-btn refresh-btn" id="btn-refresh">MANUEL YENİLE</button>
+                    <div>
+                        <button class="cyber-btn refresh-btn" id="btn-token">TOKEN İSTE</button>
+                        <button class="cyber-btn refresh-btn" id="btn-refresh">MANUEL YENİLE</button>
+                    </div>
                 </div>
 
                 <div class="form-grid" id="builder-form">
@@ -705,6 +776,10 @@
                         <input type="text" id="sure" value="01:00">
                     </div>
                     <div class="input-group">
+                        <label>Süre (saniye)</label>
+                        <input type="number" id="saniyebilgisi" value="60">
+                    </div>
+                    <div class="input-group">
                         <label>Puan</label>
                         <input type="number" id="yarisma_puani" value="120">
                     </div>
@@ -724,7 +799,6 @@
                     </div>
 
                     <!-- Gizli alanlar -->
-                    <input type="hidden" id="saniyebilgisi" value="60">
                     <input type="hidden" id="metingrububilgisi" value="">
                     <input type="hidden" id="baslik" value="">
                     <input type="hidden" id="imla" value="">
@@ -736,10 +810,21 @@
 
         </div>
     </div>
+    <div class="modal" id="req-modal">
+        <div class="modal-content">
+            <button class="cyber-btn close-modal" id="modal-close">KAPAT</button>
+            <h3 id="modal-title">İstek Detayı</h3>
+            <div><strong>Payload</strong></div>
+            <pre id="modal-payload">-</pre>
+            <div><strong>Response</strong></div>
+            <pre id="modal-response">-</pre>
+        </div>
+    </div>
 
     <script>
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
+        const requestStore = new Map();
 
         // Elementler
         const els = {
@@ -757,7 +842,11 @@
                 metin: document.getElementById('metin'),
                 saniyebilgisi: document.getElementById('saniyebilgisi')
             },
-            log: document.getElementById('log-area')
+            log: document.getElementById('log-area'),
+            modal: document.getElementById('req-modal'),
+            modalTitle: document.getElementById('modal-title'),
+            modalPayload: document.getElementById('modal-payload'),
+            modalResponse: document.getElementById('modal-response')
         };
 
         // Initialize
@@ -785,6 +874,11 @@
             }
             else if (msg.type === 'NEW_REQUEST') {
                 addRequest(msg.request);
+            }
+            else if (msg.type === 'UPDATE_REQUEST') {
+                requestStore.set(msg.request.id, msg.request);
+                const li = document.getElementById('req-' + msg.request.id);
+                if (li) li.querySelector('.req-event').textContent = msg.request.event + (msg.request.status !== null ? ' (' + msg.request.status + ')' : '');
             }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
@@ -814,8 +908,10 @@
 
         function addRequest(req) {
             if (req.method !== 'POST' && !req.blocked) return; // Filtrele
+            requestStore.set(req.id, req);
 
             const li = document.createElement('li');
+            li.id = 'req-' + req.id;
             li.className = 'req-item' + (req.blocked ? ' blocked' : '');
             const time = new Date(req.timestamp).toLocaleTimeString();
 
@@ -823,12 +919,17 @@
                 <span class="req-time">[\${time}]</span>
                 <span class="req-method">\${req.method}</span>
                 <span class="req-url">\${req.url.split('/').pop()}</span>
+                <span class="req-event">\${req.event}\${req.status !== null ? ' (' + req.status + ')' : ''}</span>
             \`;
 
-            // Tıklayınca payload göster (ileride detay modalı eklenebilir)
             li.onclick = () => {
-                console.log(req.body);
-                log("Payload konsola yazıldı.");
+                const currentReq = requestStore.get(req.id) || req;
+                const payloadText = typeof currentReq.body === 'string' ? currentReq.body : JSON.stringify(currentReq.body, null, 2);
+                const responseText = currentReq.response ? currentReq.response : 'Response yok';
+                els.modalTitle.textContent = currentReq.method + ' - ' + currentReq.url;
+                els.modalPayload.textContent = payloadText || '-';
+                els.modalResponse.textContent = responseText;
+                els.modal.style.display = 'flex';
             };
 
             els.reqList.prepend(li);
@@ -868,6 +969,9 @@
         document.getElementById('btn-refresh').addEventListener('click', () => {
             opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
         });
+        document.getElementById('btn-token').addEventListener('click', () => {
+            opener.postMessage({ type: 'REQUEST_TOKEN' }, '*');
+        });
 
         document.getElementById('btn-send').addEventListener('click', () => {
             const formData = {};
@@ -875,6 +979,12 @@
                 formData[inp.id] = inp.value;
             });
             opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
+        });
+        document.getElementById('modal-close').addEventListener('click', () => {
+            els.modal.style.display = 'none';
+        });
+        els.modal.addEventListener('click', (e) => {
+            if (e.target === els.modal) els.modal.style.display = 'none';
         });
 
         // --- Auto Math & Profil ---
@@ -905,6 +1015,34 @@
             });
             opener.postMessage({ type: 'UPDATE_BUILDER', data: formData }, '*');
         }
+
+        function secondsToClock(seconds) {
+            const sec = Math.max(0, parseInt(seconds) || 0);
+            const m = Math.floor(sec / 60).toString().padStart(2, '0');
+            const s = (sec % 60).toString().padStart(2, '0');
+            return m + ":" + s;
+        }
+
+        function clockToSeconds(value) {
+            const parts = String(value || '').split(':');
+            if (parts.length !== 2) return null;
+            const m = parseInt(parts[0], 10);
+            const s = parseInt(parts[1], 10);
+            if (isNaN(m) || isNaN(s)) return null;
+            return (m * 60) + s;
+        }
+
+        els.inputs.sure.addEventListener('input', () => {
+            const seconds = clockToSeconds(els.inputs.sure.value);
+            if (seconds !== null) {
+                els.inputs.saniyebilgisi.value = seconds;
+                calculateStats();
+            }
+        });
+        els.inputs.saniyebilgisi.addEventListener('input', () => {
+            els.inputs.sure.value = secondsToClock(els.inputs.saniyebilgisi.value);
+            calculateStats();
+        });
 
         els.inputs.dogru.addEventListener('input', calculateStats);
         els.inputs.yanlis.addEventListener('input', calculateStats);
