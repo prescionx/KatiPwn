@@ -428,8 +428,15 @@
                     break;
                 case 'GET_USERNAME': {
                     let uname = null;
-                    const cMatch = document.cookie.match(/username=([^;]+)/);
-                    if (cMatch) uname = decodeURIComponent(cMatch[1]);
+                    // Find <li><p>email@...</p></li> on the page
+                    const allP = document.querySelectorAll('li > p');
+                    for (const p of allP) {
+                        const text = p.textContent.trim();
+                        if (text && text.includes('@')) {
+                            uname = text;
+                            break;
+                        }
+                    }
                     if (!uname) {
                         const profileEl = document.querySelector('.username, .profil-adi, [class*="username"], [class*="kullanici"]');
                         if (profileEl) uname = profileEl.textContent.trim();
@@ -716,6 +723,7 @@
         .leader-info { display: flex; flex-direction: column; }
         .leader-name { font-weight: bold; color: var(--neon-pink); }
         .leader-score { color: var(--neon-green); }
+        .leader-emoji { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 16px; background: rgba(255,255,255,0.1); }
 
         /* Main Content (Builder) */
         .main {
@@ -1062,16 +1070,8 @@
             if (safePost({ type: 'GET_USERNAME' })) {
                 usernameTimeout = setTimeout(() => {
                     if (!usernameReceived) {
-                        showNotification('Username alınamadı, ana sayfa yenileniyor...', 'error');
-                        setTimeout(() => {
-                            if (opener && !opener.closed) {
-                                opener.location.reload();
-                                setTimeout(() => {
-                                    usernameReceived = false;
-                                    requestUsername();
-                                }, 4000);
-                            }
-                        }, 2000);
+                        document.getElementById('username-display').textContent = 'Bağlantı zaman aşımı';
+                        document.getElementById('username-display').style.color = 'var(--neon-red)';
                     }
                 }, 5000);
             }
@@ -1080,6 +1080,7 @@
         setTimeout(() => {
             requestUsername();
             startHeartbeat();
+            safePost({ type: 'GET_TOP_SCORERS' });
         }, 500);
 
         // Modal Variables
@@ -1192,9 +1193,14 @@
                      let mesaj = "";
                      try {
                          const json = JSON.parse(req.response);
-                         if (json.durum !== undefined) durum = parseInt(json.durum);
-                         if (json.mesaj) mesaj = json.mesaj;
+                         if (json.durum !== undefined) {
+                             if (json.durum === 'success' || json.durum === 0 || json.durum === '0') durum = 0;
+                             else { durum = parseInt(json.durum); if (isNaN(durum)) durum = 3; }
+                         }
+                         if (json.mesaj && typeof json.mesaj === 'string') mesaj = json.mesaj;
                      } catch(e) {}
+
+                     const isLeaderboardReq = req.body && typeof req.body === 'string' && req.body.includes('hizlilari_getir');
 
                      // Update UI
                      const li = document.getElementById('req-li-' + req.id);
@@ -1208,10 +1214,14 @@
 
                          const statusDiv = document.createElement('div');
                          statusDiv.className = 'req-status ' + cls;
-                         statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         if (isLeaderboardReq) {
+                             statusDiv.innerHTML = icon + 'Success';
+                         } else {
+                             statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         }
                          li.appendChild(statusDiv);
 
-                         if (mesaj && mesaj.length > 20) {
+                         if (!isLeaderboardReq && mesaj && mesaj.length > 20) {
                              const msgDiv = document.createElement('div');
                              msgDiv.className = 'req-msg';
                              msgDiv.textContent = mesaj;
@@ -1284,8 +1294,16 @@
                     }
 
                   if (found) {
+    const leaderEmojis = ['🦊', '🐱', '🐼', '🦁', '🐯', '🐰', '🐨', '🐸', '🦉', '🐺'];
+    const rndEmoji = leaderEmojis[Math.floor(Math.random() * leaderEmojis.length)];
+    let avatarHtml;
+    if (imgSrc) {
+        avatarHtml = '<img src="' + imgSrc + '" class="leader-img" onerror="this.outerHTML=\\'<span class=leader-emoji>' + rndEmoji + '</span>\\'" >';
+    } else {
+        avatarHtml = '<span class="leader-emoji">' + rndEmoji + '</span>';
+    }
     container.innerHTML += '<div class="leader-item">' +
-                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\\'none\\'" >' +
+                               avatarHtml +
                                '<div class="leader-info">' +
                                    '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
                                    '<span class="leader-score">' + userScore + ' Puan</span>' +
@@ -1304,17 +1322,10 @@
                 if (usernameTimeout) clearTimeout(usernameTimeout);
                 if (msg.username) {
                     document.getElementById('username-display').textContent = msg.username;
+                    document.getElementById('username-display').style.color = 'var(--neon-green)';
                 } else {
-                    showNotification('Username alınamadı, ana sayfa yenileniyor...', 'error');
-                    setTimeout(() => {
-                        if (opener && !opener.closed) {
-                            opener.location.reload();
-                            setTimeout(() => {
-                                usernameReceived = false;
-                                requestUsername();
-                            }, 4000);
-                        }
-                    }, 2000);
+                    document.getElementById('username-display').textContent = 'Giriş yapılmamış!';
+                    document.getElementById('username-display').style.color = 'var(--neon-red)';
                 }
             }
             else if (msg.type === 'PONG') {
