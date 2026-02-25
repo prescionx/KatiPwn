@@ -1198,7 +1198,7 @@
                         const uScore = user.puan || 0;
 
                         container.innerHTML += '<div class="leader-item">' +
-                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
+                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\\'none\\'" >' +
                                '<div class="leader-info">' +
                                    '<span class="leader-name">' + uName + ' (' + time + ')</span>' +
                                    '<span class="leader-score">' + uScore + ' Puan</span>' +
