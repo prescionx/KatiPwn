@@ -198,6 +198,22 @@
             });
         },
 
+        // Helper: Manuel Token İste
+        requestNewToken: function() {
+            console.log("GhostKernel: Yeni token isteniyor...");
+            window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: 'islem=calisma_baslat'
+            }).then(res => res.text()).then(text => {
+                console.log("GhostKernel: Yeni token yanıtı:", text);
+            }).catch(err => {
+                console.error("GhostKernel: Token isteği hatası", err);
+            });
+        },
+
         // Helper: Auto-Submit Tetikleyici
         triggerAutoSubmit: function() {
             // Builder verilerini tazeleyelim (kullanıcı UI'dan değiştirmiş olabilir, veya varsayılanlar)
@@ -316,6 +332,9 @@
                     // Manuel gönder butonu (Target Page'den)
                     this.state.builderData = msg.data; // Son veriyi al
                     this.triggerAutoSubmit();
+                    break;
+                case 'REQUEST_NEW_TOKEN':
+                    this.requestNewToken();
                     break;
             }
         },
@@ -463,6 +482,36 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: var(--bg); }
         ::-webkit-scrollbar-thumb { background: var(--neon-green); border-radius: 3px; }
+
+        /* Modal Styles */
+        .modal {
+            display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.7); backdrop-filter: blur(5px);
+            align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background-color: #111; border: 1px solid var(--neon-green);
+            width: 80%; max-width: 800px; max-height: 80%;
+            display: flex; flex-direction: column;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+            border-radius: 8px; overflow: hidden;
+        }
+        .modal-header {
+            padding: 15px; background: rgba(0, 255, 65, 0.1);
+            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .modal-title { font-weight: bold; color: var(--neon-green); }
+        .close-modal { color: #aaa; font-size: 24px; cursor: pointer; }
+        .close-modal:hover { color: #fff; }
+        .modal-body { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .detail-row { display: flex; flex-direction: column; gap: 5px; }
+        .detail-label { font-size: 11px; color: var(--neon-pink); text-transform: uppercase; }
+        .detail-val {
+            background: rgba(255,255,255,0.05); padding: 10px; border-radius: 4px;
+            font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+            border: 1px solid #333;
+        }
 
         .app-container {
             display: grid;
@@ -688,7 +737,10 @@
                 <div class="form-grid" id="builder-form">
                     <div class="input-group full-width">
                         <label>Çalışma Token</label>
-                        <input type="text" id="calisma_token" readonly style="opacity: 0.7;">
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="calisma_token" readonly style="opacity: 0.7; flex: 1;">
+                            <button class="cyber-btn" id="btn-request-token" style="font-size: 10px; padding: 5px; margin: 0;">TOKEN İSTE</button>
+                        </div>
                     </div>
 
                     <div class="input-group">
@@ -704,6 +756,11 @@
                         <label>Süre (mm:ss)</label>
                         <input type="text" id="sure" value="01:00">
                     </div>
+                    <div class="input-group">
+                        <label>Saniye (sn)</label>
+                        <input type="number" id="saniyebilgisi" value="60">
+                    </div>
+
                     <div class="input-group">
                         <label>Puan</label>
                         <input type="number" id="yarisma_puani" value="120">
@@ -724,7 +781,6 @@
                     </div>
 
                     <!-- Gizli alanlar -->
-                    <input type="hidden" id="saniyebilgisi" value="60">
                     <input type="hidden" id="metingrububilgisi" value="">
                     <input type="hidden" id="baslik" value="">
                     <input type="hidden" id="imla" value="">
@@ -737,9 +793,69 @@
         </div>
     </div>
 
+    <!-- REQUEST MODAL -->
+    <div id="request-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title">İSTEK DETAYI</span>
+                <span class="close-modal" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-details">
+                <!-- Javascript ile doldurulacak -->
+            </div>
+        </div>
+    </div>
+
     <script>
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
+
+        // Modal Variables
+        const modal = document.getElementById('request-modal');
+        const modalBody = document.getElementById('modal-details');
+        const requestMap = {};
+        let currentOpenReqId = null;
+
+        // Modal Functions
+        window.closeModal = function() {
+            modal.style.display = "none";
+            currentOpenReqId = null;
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) closeModal();
+        }
+
+        function showModal(id) {
+            const req = requestMap[id];
+            if (!req) return;
+            currentOpenReqId = id;
+
+            const fmt = (obj) => {
+                 if (typeof obj !== 'string') return JSON.stringify(obj, null, 2);
+                 try { return JSON.stringify(JSON.parse(obj), null, 2); }
+                 catch(e) { return obj; }
+            };
+
+            let html = '';
+            html += '<div class="detail-row"><span class="detail-label">URL</span><span class="detail-val">' + req.url + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Method</span><span class="detail-val">' + req.method + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-val">' + (req.status || 'Pending...') + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Time</span><span class="detail-val">' + new Date(req.timestamp).toLocaleTimeString() + '</span></div>';
+
+            if (req.body) {
+                 html += '<div class="detail-row"><span class="detail-label">Payload</span><div class="detail-val">' + fmt(req.body) + '</div></div>';
+            }
+
+            if (req.response) {
+                 html += '<div class="detail-row"><span class="detail-label">Response</span><div class="detail-val">' + fmt(req.response) + '</div></div>';
+            } else if (req.blocked) {
+                 html += '<div class="detail-row"><span class="detail-label">Response</span><div class="detail-val" style="color:red">BLOCKED</div></div>';
+            }
+
+            modalBody.innerHTML = html;
+            modal.style.display = "flex";
+        }
 
         // Elementler
         const els = {
@@ -786,6 +902,14 @@
             else if (msg.type === 'NEW_REQUEST') {
                 addRequest(msg.request);
             }
+            else if (msg.type === 'UPDATE_REQUEST') {
+                 const req = requestMap[msg.id];
+                 if (req) {
+                     req.response = msg.response;
+                     req.status = msg.status;
+                     if (currentOpenReqId === msg.id) showModal(msg.id);
+                 }
+            }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
                 // Refresh triggerla
@@ -813,6 +937,7 @@
         }
 
         function addRequest(req) {
+            requestMap[req.id] = req;
             if (req.method !== 'POST' && !req.blocked) return; // Filtrele
 
             const li = document.createElement('li');
@@ -825,10 +950,8 @@
                 <span class="req-url">\${req.url.split('/').pop()}</span>
             \`;
 
-            // Tıklayınca payload göster (ileride detay modalı eklenebilir)
             li.onclick = () => {
-                console.log(req.body);
-                log("Payload konsola yazıldı.");
+                showModal(req.id);
             };
 
             els.reqList.prepend(li);
@@ -875,6 +998,10 @@
                 formData[inp.id] = inp.value;
             });
             opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
+        });
+
+        document.getElementById('btn-request-token').addEventListener('click', () => {
+            opener.postMessage({ type: 'REQUEST_NEW_TOKEN' }, '*');
         });
 
         // --- Auto Math & Profil ---
