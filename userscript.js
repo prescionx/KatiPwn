@@ -973,7 +973,7 @@
 
         // Username Init
         setTimeout(() => {
-            const match = document.cookie.match(/username=([^;]+)/);
+            const match = document.cookie.match(new RegExp('username=([^;]+)'));
             if (match) {
                 document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
             }
@@ -1159,9 +1159,9 @@
                     if (!found) {
                         try {
                             const html = rawData;
-                            const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
-                            const userMatch = html.match(/<a[^>]*profile[^>]*>\s*(.*?)\s*<\/a>/i);
-                            const scoreMatch = html.match(/(\d+)\s*<br>\s*<small>Doğru/i);
+                            const imgMatch = html.match(new RegExp('src=["\']([^"\']+(?:jpg|png|jpeg|gif))["\']', 'i'));
+                            const userMatch = html.match(new RegExp('<a[^>]*profile[^>]*>\\s*(.*?)\\s*<\\/a>', 'i'));
+                            const scoreMatch = html.match(new RegExp('(\\d+)\\s*<br>\\s*<small>Doğru', 'i'));
 
                             if (imgMatch || userMatch) {
                                 imgSrc = imgMatch ? imgMatch[1] : '';
@@ -1172,15 +1172,17 @@
                         } catch(e) { console.error("Leaderboard Parse Error:", e); }
                     }
 
-                  if (found) {
-    container.innerHTML += '<div class="leader-item">' +
-                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
-                               '<div class="leader-info">' +
-                                   '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
-                                   '<span class="leader-score">' + userScore + ' Puan</span>' +
-                               '</div>' +
-                           '</div>';
-}
+                    if (found) {
+                        container.innerHTML += `
+                            <div class="leader-item">
+                                <img src="${imgSrc}" class="leader-img" onerror="this.style.display='none'">
+                                <div class="leader-info">
+                                    <span class="leader-name">${userName} (${time})</span>
+                                    <span class="leader-score">${userScore} Puan</span>
+                                </div>
+                            </div>
+                        `;
+                    }
                 }
             }
             else if (msg.type === 'GAME_STARTED') {
