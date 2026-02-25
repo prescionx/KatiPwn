@@ -386,7 +386,7 @@
 
         injectTriggerButton: function() {
             const btn = document.createElement('button');
-            btn.textContent = 'KatiPwn';
+            btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#00ff41" stroke-width="2" stroke-linecap="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg> KatiPwn';
             btn.style.cssText = `
                 position: fixed; bottom: 20px; left: 20px; z-index: 99999;
                 padding: 10px 20px; background: rgba(0,0,0,0.8); color: #00ff41;
@@ -443,10 +443,12 @@
             container.id = 'ghost-hud';
             container.innerHTML = `
                 <div class="hud-bar">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#00ff41" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                     <span class="hud-label">Orijinal</span>
                     <span class="hud-time" id="hud-orig">00:00</span>
                 </div>
                 <div class="hud-bar hud-safe">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#ff00de" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                     <span class="hud-label">+5sn Safe</span>
                     <span class="hud-time" id="hud-safe">00:00</span>
                 </div>
@@ -730,13 +732,76 @@
         }
         .token-btn:hover { background: var(--neon-pink); color: #fff; box-shadow: 0 0 10px var(--neon-pink); }
 
+        /* Icon alignment */
+        .icon-inline {
+            display: inline-flex;
+            align-items: center;
+            vertical-align: middle;
+            margin-right: 4px;
+        }
+        .sidebar-header .icon-inline, .panel-title .icon-inline,
+        .switch-label .icon-inline, .cyber-btn .icon-inline {
+            display: inline-flex;
+            align-items: center;
+        }
+
+        /* Notification Bubble */
+        #notification-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 2000;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            pointer-events: none;
+        }
+        .notification-bubble {
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-family: 'Segoe UI', monospace;
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            animation: notif-in 0.3s ease, notif-out 0.3s ease 2.7s forwards;
+            pointer-events: auto;
+            max-width: 300px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        .notification-bubble.success {
+            background: rgba(0, 255, 65, 0.15);
+            border-color: var(--neon-green);
+            color: var(--neon-green);
+        }
+        .notification-bubble.error {
+            background: rgba(255, 42, 42, 0.15);
+            border-color: var(--neon-red);
+            color: var(--neon-red);
+        }
+        .notification-bubble.info {
+            background: rgba(255, 0, 222, 0.15);
+            border-color: var(--neon-pink);
+            color: var(--neon-pink);
+        }
+        @keyframes notif-in {
+            from { opacity: 0; transform: translateX(30px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes notif-out {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(30px); }
+        }
+
     </style>
 </head>
 <body>
     <div class="app-container">
         <!-- SIDEBAR -->
         <div class="sidebar">
-            <div class="sidebar-header">AĞ İZLEME GEÇMİŞİ</div>
+            <div class="sidebar-header"><span class="icon-inline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1" fill="currentColor"/></svg></span>AĞ İZLEME GEÇMİŞİ</div>
             <ul id="req-list">
                 <!-- İstekler buraya gelecek -->
             </ul>
@@ -747,10 +812,10 @@
 
             <!-- AYARLAR -->
             <div class="glass-panel">
-                <span class="panel-title">SİSTEM KONTROLÜ</span>
+                <span class="panel-title"><span class="icon-inline"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></span>SİSTEM KONTROLÜ</span>
 
                 <div class="switch-row green">
-                    <span class="switch-label">OTO-GÖNDER (Auto-Submit)</span>
+                    <span class="switch-label"><span class="icon-inline"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>OTO-GÖNDER (Auto-Submit)</span>
                     <label class="switch">
                         <input type="checkbox" id="toggle-autosubmit">
                         <span class="slider"></span>
@@ -758,7 +823,7 @@
                 </div>
 
                 <div class="switch-row red">
-                    <span class="switch-label">BLOKLAYICI (Request Blocker)</span>
+                    <span class="switch-label"><span class="icon-inline"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>BLOKLAYICI (Request Blocker)</span>
                     <label class="switch">
                         <input type="checkbox" id="toggle-blocker">
                         <span class="slider"></span>
@@ -772,7 +837,7 @@
 
             <!-- REQUEST BUILDER -->
             <div class="glass-panel">
-                <span class="panel-title">İSTEK OLUŞTURUCU (BUILDER)</span>
+                <span class="panel-title"><span class="icon-inline"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>İSTEK OLUŞTURUCU (BUILDER)</span>
 
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div class="profile-badges">
@@ -780,7 +845,7 @@
                         <span class="badge" onclick="setProfile('pro')">PRO (110)</span>
                         <span class="badge" onclick="setProfile('god')">GOD (200+)</span>
                     </div>
-                    <button class="cyber-btn refresh-btn" id="btn-refresh">MANUEL YENİLE</button>
+                    <button class="cyber-btn refresh-btn" id="btn-refresh"><span class="icon-inline"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>MANUEL YENİLE</button>
                 </div>
 
                 <div class="form-grid" id="builder-form">
@@ -788,7 +853,7 @@
                         <label>Çalışma Token</label>
                         <div style="display: flex; gap: 5px;">
                             <input type="text" id="calisma_token" readonly style="opacity: 0.7; flex: 1;">
-                            <button class="cyber-btn token-btn" id="btn-request-token" type="button">TOKEN İSTE</button>
+                            <button class="cyber-btn token-btn" id="btn-request-token" type="button"><span class="icon-inline"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span>TOKEN İSTE</button>
                         </div>
                     </div>
 
@@ -838,7 +903,7 @@
                     <input type="hidden" id="imla" value="">
                 </div>
 
-                <button class="cyber-btn" id="btn-send" style="width: 100%;">BU VERİLERLE GÖNDER</button>
+                <button class="cyber-btn" id="btn-send" style="width: 100%;"><span class="icon-inline"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg></span>BU VERİLERLE GÖNDER</button>
                 <div id="log-area">Sistem Hazır.</div>
             </div>
 
@@ -848,15 +913,50 @@
     <!-- DETAIL MODAL -->
     <div id="detail-modal">
         <div class="glass-panel">
-            <span class="panel-title">İSTEK DETAYI</span>
+            <span class="panel-title"><span class="icon-inline"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>İSTEK DETAYI</span>
             <button class="detail-close" onclick="closeDetail()">✕</button>
             <div id="detail-content" style="margin-top: 20px;"></div>
         </div>
     </div>
 
+    <!-- NOTIFICATION BUBBLE -->
+    <div id="notification-container"></div>
+
     <script>
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
+
+        // --- BİLDİRİM SİSTEMİ ---
+        function showNotification(message, type) {
+            type = type || 'info';
+            var container = document.getElementById('notification-container');
+            if (!container) return;
+            var notifIcons = {
+                success: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+                error: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+                info: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+            };
+            var bubble = document.createElement('div');
+            bubble.className = 'notification-bubble ' + type;
+            bubble.innerHTML = (notifIcons[type] || notifIcons.info) + '<span>' + message + '</span>';
+            container.appendChild(bubble);
+            setTimeout(function() {
+                if (bubble.parentNode) bubble.parentNode.removeChild(bubble);
+            }, 3000);
+        }
+
+        // --- GÜVENLİ POST (Safe PostMessage) ---
+        function safePost(msg) {
+            if (opener && !opener.closed) {
+                try {
+                    opener.postMessage(msg, '*');
+                } catch(e) {
+                    showNotification('Bağlantı koptu! Ana sayfayı yenileyin.', 'error');
+                }
+            } else {
+                showNotification('Ana sayfa bağlantısı yok!', 'error');
+            }
+        }
 
         // Request data store (for detail view)
         const requestStore = {};
@@ -884,7 +984,7 @@
 
         // Initialize
         if (opener) {
-            opener.postMessage({ type: 'GET_INIT_STATE' }, '*');
+            safePost({ type: 'GET_INIT_STATE' });
         }
 
         window.addEventListener('message', (e) => {
@@ -911,7 +1011,7 @@
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
                 // Refresh triggerla
-                opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+                safePost({ type: 'MANUAL_REFRESH' });
             }
             else if (msg.type === 'REFRESH_DONE') {
                 fillForm(msg.data);
@@ -923,6 +1023,10 @@
             }
             else if (msg.type === 'LOG') {
                 log(msg.message);
+                var notifType = 'info';
+                if (msg.message && msg.message.indexOf('BAŞARILI') !== -1) notifType = 'success';
+                if (msg.message && msg.message.indexOf('HATA') !== -1) notifType = 'error';
+                showNotification(msg.message, notifType);
             }
             else if (msg.type === 'UPDATE_REQUEST_RESPONSE') {
                 if (requestStore[msg.reqId]) {
@@ -1035,19 +1139,19 @@
 
         els.toggleAuto.addEventListener('change', (e) => {
             updateLock();
-            opener.postMessage({ type: 'UPDATE_CONFIG', key: 'isAutoSubmit', value: e.target.checked }, '*');
+            safePost({ type: 'UPDATE_CONFIG', key: 'isAutoSubmit', value: e.target.checked });
         });
 
         els.toggleBlock.addEventListener('change', (e) => {
-            opener.postMessage({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked }, '*');
+            safePost({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked });
         });
 
         document.getElementById('btn-refresh').addEventListener('click', () => {
-            opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+            safePost({ type: 'MANUAL_REFRESH' });
         });
 
         document.getElementById('btn-request-token').addEventListener('click', () => {
-            opener.postMessage({ type: 'REQUEST_TOKEN' }, '*');
+            safePost({ type: 'REQUEST_TOKEN' });
             log("Token isteniyor...");
         });
 
@@ -1056,7 +1160,7 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
+            safePost({ type: 'MANUAL_SEND', data: formData });
         });
 
         // --- Auto Math & Profil ---
@@ -1085,7 +1189,7 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'UPDATE_BUILDER', data: formData }, '*');
+            safePost({ type: 'UPDATE_BUILDER', data: formData });
         }
 
         els.inputs.dogru.addEventListener('input', calculateStats);
@@ -1115,7 +1219,7 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'UPDATE_BUILDER', data: formData }, '*');
+            safePost({ type: 'UPDATE_BUILDER', data: formData });
         }
 
     </script>
