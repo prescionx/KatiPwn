@@ -430,6 +430,7 @@
                     let email = null;
                     let uname = null;
                     let profilePhoto = null;
+                    let emailLi = null;
                     // Find <li><p>email@...</p></li> on the page
                     const allLi = document.querySelectorAll('li');
                     for (const li of allLi) {
@@ -438,16 +439,19 @@
                             const text = p.textContent.trim();
                             if (text && text.includes('@')) {
                                 email = text;
+                                emailLi = li;
                                 break;
                             }
                         }
                     }
-                    // Find username: <li> text content that is not the email
-                    for (const li of allLi) {
+                    // Scope username & photo search to siblings of the email <li>
+                    const scopeLis = emailLi && emailLi.parentElement ? emailLi.parentElement.querySelectorAll(':scope > li') : allLi;
+                    // Find username: sibling <li> with only text, no children, not the email
+                    for (const li of scopeLis) {
+                        if (li === emailLi) continue;
                         const text = li.textContent.trim();
-                        if (text && !text.includes('@') && !text.includes('<') && text.length > 1 && text.length < 40) {
-                            const childEl = li.children;
-                            if (childEl.length === 0) {
+                        if (text && !text.includes('@') && text.length > 1 && text.length < 40) {
+                            if (li.children.length === 0) {
                                 uname = text;
                                 break;
                             }
@@ -457,8 +461,9 @@
                         const profileEl = document.querySelector('.username, .profil-adi, [class*="username"], [class*="kullanici"]');
                         if (profileEl) uname = profileEl.textContent.trim();
                     }
-                    // Find profile photo from <li><img></li>
-                    for (const li of allLi) {
+                    // Find profile photo from sibling <li><img></li>
+                    for (const li of scopeLis) {
+                        if (li === emailLi) continue;
                         const img = li.querySelector('img');
                         if (img && li.children.length === 1) {
                             const src = img.getAttribute('src');
