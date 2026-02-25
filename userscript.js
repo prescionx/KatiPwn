@@ -95,8 +95,18 @@
                     }
                 }
 
+                let reqId = null;
                 if (!isBypass) {
-                    self.logRequest('XHR', this._method, url, body, false);
+                    reqId = self.logRequest('XHR', this._method, url, body, false);
+                }
+
+                if (reqId) {
+                    this.addEventListener('load', function() {
+                        self.updateRequestResponse(reqId, this.responseText, this.status);
+                    });
+                    this.addEventListener('error', function() {
+                        self.updateRequestResponse(reqId, "Network Error", 0);
+                    });
                 }
 
                 return originalXHRSend.apply(this, arguments);
@@ -127,8 +137,9 @@
                     }
                 }
 
+                let reqId = null;
                 if (!isBypass) {
-                    self.logRequest('FETCH', method, url, body, false);
+                    reqId = self.logRequest('FETCH', method, url, body, false);
                 }
 
                 try {
@@ -138,8 +149,19 @@
                     if (url.includes('islemler.php')) {
                         clone.text().then(text => self.processStartResponse(text));
                     }
+
+                    if (reqId) {
+                         const respClone = response.clone();
+                         respClone.text().then(text => {
+                             self.updateRequestResponse(reqId, text, response.status);
+                         });
+                    }
+
                     return response;
                 } catch (err) {
+                    if (reqId) {
+                         self.updateRequestResponse(reqId, "Fetch Error: " + err.message, 0);
+                    }
                     throw err;
                 }
             };
@@ -187,7 +209,9 @@
             const reqData = {
                 id: Date.now() + Math.random(), // Unique ID
                 type, method, url, body, blocked,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                response: null,
+                status: null
             };
             this.state.requests.unshift(reqData); // En başa ekle
 
@@ -195,6 +219,59 @@
             this.broadcast({
                 type: 'NEW_REQUEST',
                 request: reqData
+            });
+
+            return reqData.id;
+        },
+
+        updateRequestResponse: function(id, response, status) {
+             const req = this.state.requests.find(r => r.id === id);
+             if (req) {
+                 req.response = response;
+                 req.status = status;
+                 this.broadcast({
+                     type: 'UPDATE_REQUEST',
+                     id: id,
+                     response: response,
+                     status: status
+                 });
+             }
+        },
+
+        // Helper: Manuel Token İste
+        requestNewToken: function() {
+            console.log("GhostKernel: Yeni token isteniyor...");
+            window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                },
+                body: 'islem=calisma_baslat'
+            }).then(res => res.text()).then(text => {
+                console.log("GhostKernel: Yeni token yanıtı:", text);
+
+                let token = null;
+                try {
+                    const json = JSON.parse(text);
+                    token = json.calisma_token || json.token;
+                } catch(e) {
+                     const match = text.match(/calisma_token["']?\s*:\s*["']?([^"'}]+)["']?/);
+                     if (match) token = match[1];
+                }
+
+                if (token) {
+                    this.state.lastToken = token;
+                    if (!this.state.builderData) this.state.builderData = {};
+                    this.state.builderData.calisma_token = token;
+
+                    this.broadcast({ type: 'REFRESH_DONE', data: this.state.builderData });
+                    this.broadcast({ type: 'LOG', message: "Token Alındı!" });
+                } else {
+                    this.broadcast({ type: 'LOG', message: "Token Alınamadı!" });
+                }
+            }).catch(err => {
+                console.error("GhostKernel: Token isteği hatası", err);
+                this.broadcast({ type: 'LOG', message: "Token Hatası!" });
             });
         },
 
@@ -224,19 +301,34 @@
                 params.append(key, payload[key]);
             }
 
-            window.fetch('https://katiponline.com/klavye-hiz-testi/sonuckaydet.php', {
+            const url = 'https://katiponline.com/klavye-hiz-testi/sonuckaydet.php';
+            const body = params.toString();
+
+            // Log Request
+            const reqId = this.logRequest('FETCH', 'POST', url, body, false);
+
+            window.fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                     'X-Bypass-Interceptor': 'true'
                 },
-                body: params.toString()
-            }).then(res => res.text()).then(text => {
+                body: body
+            }).then(res => {
+                const status = res.status;
+                return res.text().then(text => ({ text, status }));
+            }).then(({ text, status }) => {
                 console.log("GhostKernel: Auto-Submit BAŞARILI!", text);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER BAŞARILI!" });
+
+                // Update Log with Response
+                this.updateRequestResponse(reqId, text, status);
             }).catch(err => {
                 console.error("GhostKernel: Auto-Submit HATASI", err);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER HATASI!" });
+
+                // Update Log with Error
+                this.updateRequestResponse(reqId, err.message, 0);
             });
         },
 
@@ -317,7 +409,45 @@
                     this.state.builderData = msg.data; // Son veriyi al
                     this.triggerAutoSubmit();
                     break;
+                case 'REQUEST_NEW_TOKEN':
+                    this.requestNewToken();
+                    break;
+                case 'GET_TOP_SCORERS':
+                    this.fetchTopScorers();
+                    break;
             }
+        },
+
+        fetchTopScorers: function() {
+            const durations = ['1:00', '3:00', '5:00'];
+            const results = {};
+            let completed = 0;
+
+            durations.forEach(sure => {
+                const params = new URLSearchParams();
+                params.append('islem', 'hizlilari_getir');
+                params.append('sure', sure);
+                params.append('tarih', 'hepsi');
+
+                window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                    body: params.toString()
+                })
+                .then(res => res.text())
+                .then(text => {
+                    results[sure] = text;
+                })
+                .catch(err => {
+                    results[sure] = "Error";
+                })
+                .finally(() => {
+                    completed++;
+                    if (completed === durations.length) {
+                        this.broadcast({ type: 'TOP_SCORERS_RESULT', data: results });
+                    }
+                });
+            });
         },
 
         injectTriggerButton: function() {
@@ -464,6 +594,36 @@
         ::-webkit-scrollbar-track { background: var(--bg); }
         ::-webkit-scrollbar-thumb { background: var(--neon-green); border-radius: 3px; }
 
+        /* Modal Styles */
+        .modal {
+            display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.7); backdrop-filter: blur(5px);
+            align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background-color: #111; border: 1px solid var(--neon-green);
+            width: 80%; max-width: 800px; max-height: 80%;
+            display: flex; flex-direction: column;
+            box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
+            border-radius: 8px; overflow: hidden;
+        }
+        .modal-header {
+            padding: 15px; background: rgba(0, 255, 65, 0.1);
+            border-bottom: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .modal-title { font-weight: bold; color: var(--neon-green); }
+        .close-modal { color: #aaa; font-size: 24px; cursor: pointer; }
+        .close-modal:hover { color: #fff; }
+        .modal-body { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+        .detail-row { display: flex; flex-direction: column; gap: 5px; }
+        .detail-label { font-size: 11px; color: var(--neon-pink); text-transform: uppercase; }
+        .detail-val {
+            background: rgba(255,255,255,0.05); padding: 10px; border-radius: 4px;
+            font-family: monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all;
+            border: 1px solid #333;
+        }
+
         .app-container {
             display: grid;
             grid-template-columns: 300px 1fr;
@@ -508,6 +668,30 @@
         .req-time { color: #666; font-size: 10px; margin-bottom: 3px; display: block; }
         .req-method { font-weight: bold; margin-right: 5px; }
         .req-url { color: var(--neon-green); word-break: break-all; }
+        .req-status { font-weight: bold; font-size: 11px; margin-top: 5px; }
+        .req-msg { font-size: 10px; color: #aaa; margin-top: 2px; white-space: pre-wrap; }
+
+        .status-success { color: var(--neon-green); }
+        .status-warn { color: yellow; }
+        .status-error { color: var(--neon-red); }
+        .status-unknown { color: cyan; }
+
+        .icon { width: 14px; height: 14px; fill: currentColor; vertical-align: middle; margin-right: 5px; }
+        .icon.large { width: 18px; height: 18px; }
+
+        /* Leaderboard */
+        .leaderboard {
+            padding: 10px; border-top: 1px solid var(--border);
+            font-size: 11px; display: flex; flex-direction: column; gap: 5px;
+        }
+        .leader-item {
+            display: flex; align-items: center; gap: 10px;
+            background: rgba(255,255,255,0.05); padding: 5px; border-radius: 4px;
+        }
+        .leader-img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+        .leader-info { display: flex; flex-direction: column; }
+        .leader-name { font-weight: bold; color: var(--neon-pink); }
+        .leader-score { color: var(--neon-green); }
 
         /* Main Content (Builder) */
         .main {
@@ -638,14 +822,29 @@
     <div class="app-container">
         <!-- SIDEBAR -->
         <div class="sidebar">
-            <div class="sidebar-header">AĞ İZLEME GEÇMİŞİ</div>
+            <div class="sidebar-header">
+                <svg class="icon large" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-.61.08-1.21.21-1.78L8.99 15v1c0 1.1.9 2 2 2v1.93C7.06 19.43 4 16.07 4 12zm13.89 5.4c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41C17.92 5.77 20 8.65 20 12c0 2.05-.81 3.93-2.11 5.4z"/></svg>
+                AĞ İZLEME GEÇMİŞİ
+            </div>
             <ul id="req-list">
                 <!-- İstekler buraya gelecek -->
             </ul>
+
+            <div class="leaderboard" id="leaderboard-area">
+                <button class="cyber-btn" id="btn-top-scorers" style="margin-top:0; font-size:10px; padding:5px;">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M20.2 2H3.8c-1.1 0-1.9.9-1.8 1.9.9 7.7 7.4 13.6 15 13.6s14.1-5.9 15-13.6c.1-1.1-.7-2-1.8-1.9zM7 7.5c-.8 0-1.5-.7-1.5-1.5s.7-1.5 1.5-1.5 1.5.7 1.5 1.5-.7 1.5-1.5 1.5zM12 13c-2.2 0-4-1.8-4-4s1.8-4 4-4 4 1.8 4 4-1.8 4-4 4zm7-5.5c-.8 0-1.5-.7-1.5-1.5s.7-1.5 1.5-1.5 1.5.7 1.5 1.5-.7 1.5-1.5 1.5zM6 19h12v2H6z"/></svg>
+                    BİRİNCİLERİ GETİR
+                </button>
+                <div id="leaderboard-content"></div>
+            </div>
         </div>
 
         <!-- MAIN -->
         <div class="main">
+
+            <div style="margin-bottom: 10px; font-size: 12px; color: #888;">
+                Giriş yapıldı: <span id="username-display" style="color: var(--neon-green); font-weight: bold;">...</span>
+            </div>
 
             <!-- AYARLAR -->
             <div class="glass-panel">
@@ -688,7 +887,10 @@
                 <div class="form-grid" id="builder-form">
                     <div class="input-group full-width">
                         <label>Çalışma Token</label>
-                        <input type="text" id="calisma_token" readonly style="opacity: 0.7;">
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="calisma_token" readonly style="opacity: 0.7; flex: 1;">
+                            <button class="cyber-btn" id="btn-request-token" style="font-size: 10px; padding: 5px; margin: 0;">TOKEN İSTE</button>
+                        </div>
                     </div>
 
                     <div class="input-group">
@@ -704,6 +906,11 @@
                         <label>Süre (mm:ss)</label>
                         <input type="text" id="sure" value="01:00">
                     </div>
+                    <div class="input-group">
+                        <label>Saniye (sn)</label>
+                        <input type="number" id="saniyebilgisi" value="60">
+                    </div>
+
                     <div class="input-group">
                         <label>Puan</label>
                         <input type="number" id="yarisma_puani" value="120">
@@ -724,7 +931,6 @@
                     </div>
 
                     <!-- Gizli alanlar -->
-                    <input type="hidden" id="saniyebilgisi" value="60">
                     <input type="hidden" id="metingrububilgisi" value="">
                     <input type="hidden" id="baslik" value="">
                     <input type="hidden" id="imla" value="">
@@ -737,9 +943,88 @@
         </div>
     </div>
 
+    <!-- REQUEST MODAL -->
+    <div id="request-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title">İSTEK DETAYI</span>
+                <span class="close-modal" onclick="closeModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="modal-details">
+                <!-- Javascript ile doldurulacak -->
+            </div>
+        </div>
+    </div>
+
     <script>
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
+
+        // ICONS (SVG)
+        const Icons = {
+            wifi: '<svg class="icon" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>',
+            upload: '<svg class="icon" viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>',
+            check: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>',
+            warn: '<svg class="icon" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>',
+            error: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm5 13.59L15.59 17 12 13.41 8.41 17 7 15.59 10.59 12 7 8.41 8.41 7 12 10.59 15.59 7 17 8.41 13.41 12 17 15.59z"/></svg>',
+            unknown: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z"/></svg>',
+            key: '<svg class="icon" viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>'
+        };
+
+        // Username Init
+        setTimeout(() => {
+            const match = document.cookie.match(/username=([^;]+)/);
+            if (match) {
+                document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+            }
+        }, 500);
+
+        // Modal Variables
+        const modal = document.getElementById('request-modal');
+        const modalBody = document.getElementById('modal-details');
+        const requestMap = {};
+        let currentOpenReqId = null;
+
+        // Modal Functions
+        window.closeModal = function() {
+            modal.style.display = "none";
+            currentOpenReqId = null;
+        }
+
+        window.onclick = function(event) {
+            if (event.target == modal) closeModal();
+        }
+
+        function showModal(id) {
+            const req = requestMap[id];
+            if (!req) return;
+            currentOpenReqId = id;
+
+            const fmt = (obj) => {
+                 if (typeof obj !== 'string') return JSON.stringify(obj, null, 2);
+                 try { return JSON.stringify(JSON.parse(obj), null, 2); }
+                 catch(e) { return obj; }
+            };
+
+            let html = '';
+            html += '<div class="detail-row"><span class="detail-label">URL</span><span class="detail-val">' + req.url + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Method</span><span class="detail-val">' + req.method + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-val">' + (req.status || 'Pending...') + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Time</span><span class="detail-val">' + new Date(req.timestamp).toLocaleTimeString() + '</span></div>';
+
+            if (req.body) {
+                 html += '<div class="detail-row"><span class="detail-label">Payload</span><div class="detail-val">' + fmt(req.body) + '</div></div>';
+            }
+
+            if (req.response) {
+                 html += '<div class="detail-row"><span class="detail-label">Response</span><div class="detail-val">' + fmt(req.response) + '</div></div>';
+            } else if (req.blocked) {
+                 html += '<div class="detail-row"><span class="detail-label">Response</span><div class="detail-val" style="color:red">BLOCKED</div></div>';
+            }
+
+            modalBody.innerHTML = html;
+            modal.style.display = "flex";
+        }
 
         // Elementler
         const els = {
@@ -786,6 +1071,118 @@
             else if (msg.type === 'NEW_REQUEST') {
                 addRequest(msg.request);
             }
+            else if (msg.type === 'UPDATE_REQUEST') {
+                 const req = requestMap[msg.id];
+                 if (req) {
+                     req.response = msg.response;
+                     req.status = msg.status;
+
+                     // Stop Animation
+                     if (req.animEl) {
+                         clearInterval(req.animInterval);
+                         req.animEl.remove();
+                         req.animEl = null;
+                     }
+
+                     // Parse Status & Message
+                     let durum = 3;
+                     let mesaj = "";
+                     try {
+                         const json = JSON.parse(req.response);
+                         if (json.durum !== undefined) durum = parseInt(json.durum);
+                         if (json.mesaj) mesaj = json.mesaj;
+                     } catch(e) {}
+
+                     // Update UI
+                     const li = document.getElementById('req-li-' + req.id);
+                     if (li) {
+                         let icon = Icons.unknown;
+                         let cls = 'status-unknown';
+
+                         if (durum === 0) { icon = Icons.check; cls = 'status-success'; }
+                         else if (durum === 1) { icon = Icons.warn; cls = 'status-warn'; }
+                         else if (durum >= 2) { icon = Icons.error; cls = 'status-error'; }
+
+                         const statusDiv = document.createElement('div');
+                         statusDiv.className = 'req-status ' + cls;
+                         statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         li.appendChild(statusDiv);
+
+                         if (mesaj && mesaj.length > 20) {
+                             const msgDiv = document.createElement('div');
+                             msgDiv.className = 'req-msg';
+                             msgDiv.textContent = mesaj;
+                             li.appendChild(msgDiv);
+                         }
+                     }
+
+                     if (currentOpenReqId === msg.id) showModal(msg.id);
+                 }
+            }
+            else if (msg.type === 'TOP_SCORERS_RESULT') {
+                const results = msg.data;
+                const container = document.getElementById('leaderboard-content');
+                container.innerHTML = "";
+
+                for (const time in results) {
+                    const rawData = results[time];
+
+                    let imgSrc = '';
+                    let userName = '???';
+                    let userScore = '0';
+                    let found = false;
+
+                    // 1. Try JSON Parsing
+                    try {
+                        let data = JSON.parse(rawData);
+                        // If array, take first; if object, take it
+                        let topUser = null;
+                        if (Array.isArray(data) && data.length > 0) topUser = data[0];
+                        else if (data && !Array.isArray(data) && data.username) topUser = data;
+
+                        if (topUser) {
+                            userName = topUser.username || "Bilinmiyor";
+                            userScore = topUser.puan || 0;
+                            // Fix relative path if needed
+                            if (topUser.profilephoto && !topUser.profilephoto.startsWith('http')) {
+                                imgSrc = 'https://katiponline.com/' + topUser.profilephoto;
+                            } else {
+                                imgSrc = topUser.profilephoto || '';
+                            }
+                            found = true;
+                        }
+                    } catch(e) {
+                        // Not JSON, fall back to HTML parsing
+                    }
+
+                    // 2. Fallback to HTML/Regex Parsing
+                    if (!found) {
+                        try {
+                            const html = rawData;
+                            const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
+                            const userMatch = html.match(/<a[^>]*profile[^>]*>\s*(.*?)\s*<\/a>/i);
+                            const scoreMatch = html.match(/(\d+)\s*<br>\s*<small>Doğru/i);
+
+                            if (imgMatch || userMatch) {
+                                imgSrc = imgMatch ? imgMatch[1] : '';
+                                userName = userMatch ? userMatch[1] : '???';
+                                userScore = scoreMatch ? scoreMatch[1] : '0';
+                                found = true;
+                            }
+                        } catch(e) { console.error("Leaderboard Parse Error:", e); }
+                    }
+
+                  if (found) {
+    container.innerHTML += '<div class="leader-item">' +
+                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
+                               '<div class="leader-info">' +
+                                   '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
+                                   '<span class="leader-score">' + userScore + ' Puan</span>' +
+                               '</div>' +
+                           '</div>';
+}
+                }
+            }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
                 // Refresh triggerla
@@ -813,22 +1210,47 @@
         }
 
         function addRequest(req) {
+            requestMap[req.id] = req;
             if (req.method !== 'POST' && !req.blocked) return; // Filtrele
 
             const li = document.createElement('li');
+            li.id = 'req-li-' + req.id;
             li.className = 'req-item' + (req.blocked ? ' blocked' : '');
             const time = new Date(req.timestamp).toLocaleTimeString();
 
+            let icon = (req.method === 'POST') ? Icons.upload : Icons.wifi;
+
             li.innerHTML = \`
                 <span class="req-time">[\${time}]</span>
-                <span class="req-method">\${req.method}</span>
+                <div>\${icon} <span class="req-method">\${req.method}</span></div>
                 <span class="req-url">\${req.url.split('/').pop()}</span>
             \`;
 
-            // Tıklayınca payload göster (ileride detay modalı eklenebilir)
+            // Animation for pending
+            if (!req.blocked) {
+                const animDiv = document.createElement('div');
+                animDiv.style.color = '#aaa';
+                animDiv.style.fontSize = '10px';
+                animDiv.style.marginTop = '5px';
+                animDiv.innerText = '(>_<)';
+                li.appendChild(animDiv);
+
+                req.animEl = animDiv;
+                let frame = 0;
+                const frames = ['(>_<)', '((>_<))', '(((>_<)))', '((>_<))'];
+                req.animInterval = setInterval(() => {
+                    frame = (frame + 1) % frames.length;
+                    animDiv.innerText = frames[frame];
+                }, 200);
+            } else {
+                 const blockDiv = document.createElement('div');
+                 blockDiv.className = 'req-status status-error';
+                 blockDiv.innerHTML = Icons.error + "BLOCKED";
+                 li.appendChild(blockDiv);
+            }
+
             li.onclick = () => {
-                console.log(req.body);
-                log("Payload konsola yazıldı.");
+                showModal(req.id);
             };
 
             els.reqList.prepend(li);
@@ -875,6 +1297,14 @@
                 formData[inp.id] = inp.value;
             });
             opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
+        });
+
+        document.getElementById('btn-request-token').addEventListener('click', () => {
+            opener.postMessage({ type: 'REQUEST_NEW_TOKEN' }, '*');
+        });
+
+        document.getElementById('btn-top-scorers').addEventListener('click', () => {
+            opener.postMessage({ type: 'GET_TOP_SCORERS' }, '*');
         });
 
         // --- Auto Math & Profil ---
