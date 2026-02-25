@@ -1266,8 +1266,8 @@
                         try {
                             const html = rawData;
                             const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
-                            const userMatch = html.match(/<a[^>]*profile[^>]*>\s*(.*?)\s*<\/a>/i);
-                            const scoreMatch = html.match(/(\d+)\s*<br>\s*<small>Doğru/i);
+                            const userMatch = html.match(/<a[^>]*profile[^>]*>\\s*(.*?)\\s*<\\/a>/i);
+                            const scoreMatch = html.match(/(\\d+)\\s*<br>\\s*<small>Doğru/i);
 
                             if (imgMatch || userMatch) {
                                 imgSrc = imgMatch ? imgMatch[1] : '';
