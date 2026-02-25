@@ -1062,10 +1062,15 @@
             if (safePost({ type: 'GET_USERNAME' })) {
                 usernameTimeout = setTimeout(() => {
                     if (!usernameReceived) {
-                        showNotification('Username alınamadı, sayfa yenileniyor...', 'error');
+                        showNotification('Username alınamadı, ana sayfa yenileniyor...', 'error');
                         setTimeout(() => {
-                            if (opener && !opener.closed) opener.location.reload();
-                            window.location.reload();
+                            if (opener && !opener.closed) {
+                                opener.location.reload();
+                                setTimeout(() => {
+                                    usernameReceived = false;
+                                    requestUsername();
+                                }, 4000);
+                            }
                         }, 2000);
                     }
                 }, 5000);
@@ -1300,10 +1305,15 @@
                 if (msg.username) {
                     document.getElementById('username-display').textContent = msg.username;
                 } else {
-                    showNotification('Username alınamadı, sayfa yenileniyor...', 'error');
+                    showNotification('Username alınamadı, ana sayfa yenileniyor...', 'error');
                     setTimeout(() => {
-                        if (opener && !opener.closed) opener.location.reload();
-                        window.location.reload();
+                        if (opener && !opener.closed) {
+                            opener.location.reload();
+                            setTimeout(() => {
+                                usernameReceived = false;
+                                requestUsername();
+                            }, 4000);
+                        }
                     }, 2000);
                 }
             }
