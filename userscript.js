@@ -430,48 +430,36 @@
                     let email = null;
                     let uname = null;
                     let profilePhoto = null;
-                    let emailLi = null;
-                    // Find <li><p>email@...</p></li> on the page
-                    const allLi = document.querySelectorAll('li');
-                    for (const li of allLi) {
-                        const p = li.querySelector('p');
-                        if (p) {
-                            const text = p.textContent.trim();
-                            if (text && text.includes('@')) {
-                                email = text;
-                                emailLi = li;
-                                break;
-                            }
+                    // Primary: profile div with d-flex align-items-center
+                    const profileDiv = document.querySelector('div.d-flex.flex-column.align-items-center');
+                    if (profileDiv) {
+                        const bolder = profileDiv.querySelector('p.fw-bolder');
+                        if (bolder) uname = bolder.textContent.trim();
+                        const muted = profileDiv.querySelector('p.text-muted');
+                        if (muted) {
+                            const t = muted.textContent.trim();
+                            if (t.includes('@')) email = t;
+                        }
+                        const img = profileDiv.querySelector('img.rounded-circle');
+                        if (img) {
+                            const src = img.getAttribute('src');
+                            if (src) profilePhoto = src.startsWith('http') ? src : 'https://katiponline.com/' + src;
                         }
                     }
-                    // Scope username & photo search to siblings of the email <li>
-                    const scopeLis = emailLi && emailLi.parentElement ? emailLi.parentElement.querySelectorAll(':scope > li') : allLi;
-                    // Find username: sibling <li> with only text, no children, not the email
-                    for (const li of scopeLis) {
-                        if (li === emailLi) continue;
-                        const text = li.textContent.trim();
-                        if (text && !text.includes('@') && text.length > 1 && text.length < 40) {
-                            if (li.children.length === 0) {
-                                uname = text;
-                                break;
+                    // Fallback: <li><p class="text-muted">email@...</p></li>
+                    if (!email) {
+                        const allLi = document.querySelectorAll('li');
+                        for (const li of allLi) {
+                            const p = li.querySelector('p.text-muted');
+                            if (p) {
+                                const text = p.textContent.trim();
+                                if (text && text.includes('@')) { email = text; break; }
                             }
                         }
                     }
                     if (!uname) {
                         const profileEl = document.querySelector('.username, .profil-adi, [class*="username"], [class*="kullanici"]');
                         if (profileEl) uname = profileEl.textContent.trim();
-                    }
-                    // Find profile photo from sibling <li><img></li>
-                    for (const li of scopeLis) {
-                        if (li === emailLi) continue;
-                        const img = li.querySelector('img');
-                        if (img && li.children.length === 1) {
-                            const src = img.getAttribute('src');
-                            if (src) {
-                                profilePhoto = src.startsWith('http') ? src : 'https://katiponline.com/' + src;
-                                break;
-                            }
-                        }
                     }
                     this.broadcast({ type: 'USERNAME_RESULT', username: uname, email: email, profilePhoto: profilePhoto });
                     break;
