@@ -1125,52 +1125,64 @@
                 container.innerHTML = "";
 
                 for (const time in results) {
-                    const html = results[time];
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
+                    const rawData = results[time];
 
-                    // Katiponline yapısına göre parse et (genelde table veya list)
-                    // Varsayım: İlk satır veya liste elemanı birinci
-                    // Örnek yapı: <tr><td><img src..></td><td>Isim</td><td>Puan</td></tr>
-                    // Veya div yapısı.
-                    // Güvenli regex ile çekmeyi deneyelim çünkü DOM yapısı değişken olabilir.
+                    let imgSrc = '';
+                    let userName = '???';
+                    let userScore = '0';
+                    let found = false;
 
-                    // Regex ile birinciyi bulmaya çalışalım
-                    // Genellikle: <img src="..."> ... <span>KullanıcıAdi</span> ... <span>Puan</span>
-
-                    // Basit parse denemesi
+                    // 1. Try JSON Parsing
                     try {
-                        const row = doc.querySelector('tr') || doc.querySelector('li') || doc.querySelector('.siralama-satir');
-                        if (row) {
-                            const img = row.querySelector('img') ? row.querySelector('img').src : '';
-                            const name = row.innerText.split('\\n')[1] || "Bilinmiyor"; // Kaba tahmin
-                            const score = row.innerText.match(/(\\d+)\\s*(puan|vuruş|kelime)/i);
+                        let data = JSON.parse(rawData);
+                        // If array, take first; if object, take it
+                        let topUser = null;
+                        if (Array.isArray(data) && data.length > 0) topUser = data[0];
+                        else if (data && !Array.isArray(data) && data.username) topUser = data;
 
-                            // Daha sağlam regex
-                            // kullanici_resim...src="(...)"...
-                            // ...kullanici_adi...>(...)<...
-
-                            // HTML string üzerinden regex
-                            const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
-                            const userMatch = html.match(/<a[^>]*profile[^>]*>\\s*(.*?)\\s*<\\/a>/i); // Profile linkinden isim
-                            // Puan genellikle kalın veya belirgin
-                            const scoreMatch = html.match(/(\\d+)\\s*<br>\\s*<small>Doğru/i); // 120 <br> <small>Doğru
-
-                            const imgSrc = imgMatch ? imgMatch[1] : '';
-                            const userName = userMatch ? userMatch[1] : '???';
-                            const userScore = scoreMatch ? scoreMatch[1] : '0';
-
-                            container.innerHTML += \`
-                                <div class="leader-item">
-                                    <img src="\${imgSrc}" class="leader-img">
-                                    <div class="leader-info">
-                                        <span class="leader-name">\${userName} (\${time})</span>
-                                        <span class="leader-score">\${userScore} Doğru</span>
-                                    </div>
-                                </div>
-                            \`;
+                        if (topUser) {
+                            userName = topUser.username || "Bilinmiyor";
+                            userScore = topUser.puan || 0;
+                            // Fix relative path if needed
+                            if (topUser.profilephoto && !topUser.profilephoto.startsWith('http')) {
+                                imgSrc = 'https://katiponline.com/' + topUser.profilephoto;
+                            } else {
+                                imgSrc = topUser.profilephoto || '';
+                            }
+                            found = true;
                         }
-                    } catch(e) { console.error(e); }
+                    } catch(e) {
+                        // Not JSON, fall back to HTML parsing
+                    }
+
+                    // 2. Fallback to HTML/Regex Parsing
+                    if (!found) {
+                        try {
+                            const html = rawData;
+                            const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
+                            const userMatch = html.match(/<a[^>]*profile[^>]*>\s*(.*?)\s*<\/a>/i);
+                            const scoreMatch = html.match(/(\d+)\s*<br>\s*<small>Doğru/i);
+
+                            if (imgMatch || userMatch) {
+                                imgSrc = imgMatch ? imgMatch[1] : '';
+                                userName = userMatch ? userMatch[1] : '???';
+                                userScore = scoreMatch ? scoreMatch[1] : '0';
+                                found = true;
+                            }
+                        } catch(e) { console.error("Leaderboard Parse Error:", e); }
+                    }
+
+                    if (found) {
+                        container.innerHTML += `
+                            <div class="leader-item">
+                                <img src="${imgSrc}" class="leader-img" onerror="this.style.display='none'">
+                                <div class="leader-info">
+                                    <span class="leader-name">${userName} (${time})</span>
+                                    <span class="leader-score">${userScore} Puan</span>
+                                </div>
+                            </div>
+                        `;
+                    }
                 }
             }
             else if (msg.type === 'GAME_STARTED') {
