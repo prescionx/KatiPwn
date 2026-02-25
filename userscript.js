@@ -33,6 +33,13 @@
             this.injectTriggerButton();
 
             window.addEventListener('message', (e) => this.handleMessage(e));
+
+            // Shortcut: Shift + K
+            window.addEventListener('keydown', (e) => {
+                if (e.shiftKey && e.key.toLowerCase() === 'k') {
+                    this.openPopup();
+                }
+            });
         },
 
         // Interceptor
@@ -415,6 +422,9 @@
                 case 'GET_TOP_SCORERS':
                     this.fetchTopScorers();
                     break;
+                case 'PING':
+                    this.broadcast({ type: 'PONG' });
+                    break;
             }
         },
 
@@ -450,6 +460,16 @@
             });
         },
 
+        openPopup: function() {
+            const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
+            if (win) {
+                UIManager.render(win);
+                this.popupWindow = win;
+            } else {
+                alert("Lütfen popup izni verin!");
+            }
+        },
+
         injectTriggerButton: function() {
             const btn = document.createElement('button');
             btn.textContent = 'KatiPwn';
@@ -463,15 +483,7 @@
             btn.onmouseover = () => btn.style.boxShadow = "0 0 20px #00ff41";
             btn.onmouseout = () => btn.style.boxShadow = "0 0 10px #00ff41";
 
-            btn.onclick = () => {
-                const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
-                if (win) {
-                    UIManager.render(win);
-                    this.popupWindow = win;
-                } else {
-                    alert("Lütfen popup izni verin!");
-                }
-            };
+            btn.onclick = () => this.openPopup();
             document.body.appendChild(btn);
         },
 
@@ -960,6 +972,39 @@
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
 
+        // Sync / Heartbeat
+        let lastPong = Date.now();
+        const HEARTBEAT_INTERVAL = 2000;
+        const TIMEOUT_LIMIT = 5000;
+
+        function checkConnection() {
+            if (!opener || opener.closed) {
+                showConnectionError("Ana sayfa kapandı!");
+                return;
+            }
+            if (Date.now() - lastPong > TIMEOUT_LIMIT) {
+                showConnectionError("Bağlantı koptu!");
+                return;
+            }
+            // Send Ping
+            opener.postMessage({ type: 'PING' }, '*');
+        }
+
+        function showConnectionError(msg) {
+             // Eğer zaten varsa ekleme
+             if (document.getElementById('conn-err-overlay')) return;
+
+             const d = document.createElement('div');
+             d.id = 'conn-err-overlay';
+             d.style.cssText = "position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); color:red; display:flex; justify-content:center; align-items:center; z-index:99999; font-size:24px; font-weight:bold; flex-direction:column; gap:10px;";
+             d.innerHTML = '<span>' + msg + '</span><button onclick="location.reload()" style="padding:10px; cursor:pointer;">YENİLE</button>';
+             document.body.appendChild(d);
+             // Stop checking
+             clearInterval(heartbeatTimer);
+        }
+
+        const heartbeatTimer = setInterval(checkConnection, HEARTBEAT_INTERVAL);
+
         // ICONS (SVG)
         const Icons = {
             wifi: '<svg class="icon" viewBox="0 0 24 24"><path d="M1 9l2 2c4.97-4.97 13.03-4.97 18 0l2-2C16.93 2.93 7.08 2.93 1 9zm8 8l3 3 3-3c-1.65-1.66-4.34-1.66-6 0zm-4-4l2 2c2.76-2.76 7.24-2.76 10 0l2-2C15.14 9.14 8.87 9.14 5 13z"/></svg>',
@@ -974,8 +1019,13 @@
         // Username Init
         setTimeout(() => {
             const match = document.cookie.match(/username=([^;]+)/);
-            if (match) {
+            if (match && match[1]) {
                 document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+            } else {
+                if (opener && !opener.closed) {
+                     opener.location.reload();
+                }
+                location.reload();
             }
         }, 500);
 
@@ -1126,61 +1176,37 @@
 
                 for (const time in results) {
                     const rawData = results[time];
+                    let parsedUsers = [];
 
-                    let imgSrc = '';
-                    let userName = '???';
-                    let userScore = '0';
-                    let found = false;
-
-                    // 1. Try JSON Parsing
                     try {
-                        let data = JSON.parse(rawData);
-                        // If array, take first; if object, take it
-                        let topUser = null;
-                        if (Array.isArray(data) && data.length > 0) topUser = data[0];
-                        else if (data && !Array.isArray(data) && data.username) topUser = data;
-
-                        if (topUser) {
-                            userName = topUser.username || "Bilinmiyor";
-                            userScore = topUser.puan || 0;
-                            // Fix relative path if needed
-                            if (topUser.profilephoto && !topUser.profilephoto.startsWith('http')) {
-                                imgSrc = 'https://katiponline.com/' + topUser.profilephoto;
-                            } else {
-                                imgSrc = topUser.profilephoto || '';
-                            }
-                            found = true;
+                        const json = JSON.parse(rawData);
+                        if (json.durum === 'success' && Array.isArray(json.mesaj)) {
+                            parsedUsers = json.mesaj;
                         }
-                    } catch(e) {
-                        // Not JSON, fall back to HTML parsing
-                    }
+                    } catch(e) { console.error("Leaderboard Parse Error for " + time, e); }
 
-                    // 2. Fallback to HTML/Regex Parsing
-                    if (!found) {
-                        try {
-                            const html = rawData;
-                            const imgMatch = html.match(/src=["']([^"']+(?:jpg|png|jpeg|gif))["']/i);
-                            const userMatch = html.match(/<a[^>]*profile[^>]*>\s*(.*?)\s*<\/a>/i);
-                            const scoreMatch = html.match(/(\d+)\s*<br>\s*<small>Doğru/i);
+                    if (parsedUsers.length > 0) {
+                        // Birinciyi al
+                        const user = parsedUsers[0];
 
-                            if (imgMatch || userMatch) {
-                                imgSrc = imgMatch ? imgMatch[1] : '';
-                                userName = userMatch ? userMatch[1] : '???';
-                                userScore = scoreMatch ? scoreMatch[1] : '0';
-                                found = true;
-                            }
-                        } catch(e) { console.error("Leaderboard Parse Error:", e); }
-                    }
+                        let imgSrc = user.profilephoto || user.kapakfoto || '';
+                        if (imgSrc && !imgSrc.startsWith('http')) {
+                            imgSrc = 'https://katiponline.com/' + imgSrc;
+                        }
 
-                  if (found) {
-    container.innerHTML += '<div class="leader-item">' +
+                        const uName = user.username || '???';
+                        const uScore = user.puan || 0;
+
+                        container.innerHTML += '<div class="leader-item">' +
                                '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
                                '<div class="leader-info">' +
-                                   '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
-                                   '<span class="leader-score">' + userScore + ' Puan</span>' +
+                                   '<span class="leader-name">' + uName + ' (' + time + ')</span>' +
+                                   '<span class="leader-score">' + uScore + ' Puan</span>' +
                                '</div>' +
                            '</div>';
-}
+                    } else {
+                         container.innerHTML += '<div class="leader-item"><div class="leader-info"><span class="leader-name">Veri Yok (' + time + ')</span></div></div>';
+                    }
                 }
             }
             else if (msg.type === 'GAME_STARTED') {
@@ -1198,6 +1224,9 @@
             }
             else if (msg.type === 'LOG') {
                 log(msg.message);
+            }
+            else if (msg.type === 'PONG') {
+                lastPong = Date.now();
             }
         });
 
