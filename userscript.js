@@ -32,6 +32,9 @@
             this.injectHUDStyles();
             this.injectTriggerButton();
 
+            // Auto-Fetch Leaderboard
+            setTimeout(() => this.fetchTopScorers(), 2000);
+
             window.addEventListener('message', (e) => this.handleMessage(e));
 
             // Shortcut: Shift + K
@@ -972,6 +975,14 @@
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
 
+        // Emoji Helper
+        const UIManager = {
+            getRandomEmoji: function() {
+                const emojis = ["🚀", "🔥", "⚡", "👽", "🤖", "👻", "🦄", "🍕", "🎮", "💀", "👾", "🥶", "🤩"];
+                return emojis[Math.floor(Math.random() * emojis.length)];
+            }
+        };
+
         // Sync / Heartbeat
         let lastPong = Date.now();
         const HEARTBEAT_INTERVAL = 2000;
@@ -1018,9 +1029,21 @@
 
         // Username Init
         setTimeout(() => {
+            let username = null;
+            // 1. Cookie Check
             const match = document.cookie.match(/username=([^;]+)/);
-            if (match && match[1]) {
-                document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+            if (match && match[1]) username = decodeURIComponent(match[1]);
+
+            // 2. Storage Fallback
+            if (!username && opener) {
+                try { username = opener.localStorage.getItem('username') || opener.sessionStorage.getItem('username'); } catch(e){}
+            }
+
+            const el = document.getElementById('username-display');
+
+            if (username) {
+                el.textContent = username;
+                el.style.color = "var(--neon-green)";
                 try { if(opener) opener.sessionStorage.removeItem('kati_pwn_retry'); } catch(e){}
             } else {
                 let retried = false;
@@ -1032,14 +1055,13 @@
                 } catch(e) {}
 
                 if (retried) {
-                    const el = document.getElementById('username-display');
-                    el.textContent = "Giriş Yapılmadı";
+                    el.textContent = "Giriş Yapılmadı (Çevrimdışı)";
                     el.style.color = "red";
                 } else {
                     if (opener && !opener.closed) {
                          try { opener.sessionStorage.setItem('kati_pwn_retry', Date.now()); } catch(e){}
                          opener.location.reload();
-                         window.close(); // Refresh sonrası popup boşalacağı için kapatıyoruz.
+                         window.close();
                     } else {
                          location.reload();
                     }
@@ -1173,10 +1195,18 @@
 
                          const statusDiv = document.createElement('div');
                          statusDiv.className = 'req-status ' + cls;
-                         statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+
+                         // hizlilari_getir ise mesajı gizle
+                         let showDetail = true;
+                         if (req.body && req.body.includes('islem=hizlilari_getir')) {
+                             showDetail = false;
+                             statusDiv.innerHTML = icon + "Success (Leaderboard)";
+                         } else {
+                             statusDiv.innerHTML = icon + (mesaj || ("Status: " + durum));
+                         }
                          li.appendChild(statusDiv);
 
-                         if (mesaj && mesaj.length > 20) {
+                         if (showDetail && mesaj && mesaj.length > 20) {
                              const msgDiv = document.createElement('div');
                              msgDiv.className = 'req-msg';
                              msgDiv.textContent = mesaj;
@@ -1208,15 +1238,21 @@
                         const user = parsedUsers[0];
 
                         let imgSrc = user.profilephoto || user.kapakfoto || '';
-                        if (imgSrc && !imgSrc.startsWith('http')) {
-                            imgSrc = 'https://katiponline.com/' + imgSrc;
+                        let imgTag = '';
+                        if (imgSrc) {
+                            if (!imgSrc.startsWith('http')) imgSrc = 'https://katiponline.com/' + imgSrc;
+                            imgTag = '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\\'none\\'; this.parentElement.innerText=\\'💀\\'">';
+                        } else {
+                            // Emoji
+                            const emoji = UIManager.getRandomEmoji();
+                            imgTag = '<span style="font-size:20px;">' + emoji + '</span>';
                         }
 
                         const uName = user.username || '???';
                         const uScore = user.puan || 0;
 
                         container.innerHTML += '<div class="leader-item">' +
-                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\\'none\\'" >' +
+                               imgTag +
                                '<div class="leader-info">' +
                                    '<span class="leader-name">' + uName + ' (' + time + ')</span>' +
                                    '<span class="leader-score">' + uScore + ' Puan</span>' +
