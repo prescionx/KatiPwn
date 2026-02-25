@@ -29,7 +29,6 @@
         init: function() {
             console.log("GhostKernel: Başlatılıyor...");
             this.hookNetwork();
-            this.injectHUDStyles();
             this.injectTriggerButton();
 
             window.addEventListener('message', (e) => this.handleMessage(e));
@@ -198,8 +197,6 @@
                     this.state.startTime = Date.now();
 
                     console.log(`GhostKernel: Oyun Başladı! Token: ${token}, Süre: ${duration}sn`);
-
-                    HUDManager.show(duration);
 
                     // UI'a haber ver
                     this.broadcast({
@@ -423,6 +420,9 @@
                 case 'GET_TOP_SCORERS':
                     this.fetchTopScorers();
                     break;
+                case 'TAKE_FIRST_PLACE':
+                    this.takeFirstPlace();
+                    break;
                 case 'PING':
                     this.broadcast({ type: 'PONG', timestamp: Date.now() });
                     break;
@@ -443,7 +443,7 @@
                         const img = profileDiv.querySelector('img.rounded-circle');
                         if (img) {
                             const src = img.getAttribute('src');
-                            if (src) profilePhoto = src.startsWith('http') ? src : 'https://katiponline.com/' + src;
+                            if (src) profilePhoto = src.startsWith('http') ? src : 'https://katiponline.com/duello/' + src;
                         }
                     }
                     // Fallback: <li><p class="text-muted">email@...</p></li>
@@ -499,6 +499,104 @@
             });
         },
 
+        fetchTokenAsync: function() {
+            return window.fetch('https://katiponline.com/klavye-hiz-testi/islemler.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+                body: 'islem=calisma_baslat'
+            }).then(res => res.text()).then(text => {
+                let token = null;
+                try {
+                    const json = JSON.parse(text);
+                    token = json.calisma_token || json.token;
+                } catch(e) {
+                    const match = text.match(/calisma_token["']?\s*:\s*["']?([^"'}]+)["']?/);
+                    if (match) token = match[1];
+                }
+                if (token) {
+                    this.state.lastToken = token;
+                    if (!this.state.builderData) this.state.builderData = {};
+                    this.state.builderData.calisma_token = token;
+                }
+                return token;
+            }).catch(() => null);
+        },
+
+        sendPayloadAsync: function(payload) {
+            const params = new URLSearchParams();
+            for (const key in payload) params.append(key, payload[key]);
+            const url = 'https://katiponline.com/klavye-hiz-testi/sonuckaydet.php';
+            const body = params.toString();
+            const reqId = this.logRequest('FETCH', 'POST', url, body, false);
+
+            return window.fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Bypass-Interceptor': 'true'
+                },
+                body: body
+            }).then(res => {
+                const status = res.status;
+                return res.text().then(text => {
+                    this.updateRequestResponse(reqId, text, status);
+                    return text;
+                });
+            }).catch(err => {
+                this.updateRequestResponse(reqId, err.message, 0);
+                return null;
+            });
+        },
+
+        takeFirstPlace: async function() {
+            const steps = [
+                { dogru: 360, sure: '01:00', saniyebilgisi: 60 },
+                { dogru: 1080, sure: '03:00', saniyebilgisi: 180 },
+                { dogru: 1800, sure: '05:00', saniyebilgisi: 300 },
+                { dogru: 1800, sure: '01:00', saniyebilgisi: 300 },
+                { dogru: 1800, sure: '03:00', saniyebilgisi: 300 },
+                { dogru: 1800, sure: '05:00', saniyebilgisi: 300 },
+            ];
+
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                this.broadcast({ type: 'TAKE_FIRST_PLACE_PROGRESS', step: i + 1, total: 6, status: 'token' });
+                this.broadcast({ type: 'LOG', message: 'Ad\u0131m ' + (i+1) + '/6: Token al\u0131n\u0131yor...' });
+
+                const token = await this.fetchTokenAsync();
+                if (!token) {
+                    this.broadcast({ type: 'LOG', message: 'Token al\u0131namad\u0131! \u0130\u015Flem durduruluyor.' });
+                    this.broadcast({ type: 'TAKE_FIRST_PLACE_DONE', success: false });
+                    return;
+                }
+
+                const payload = {
+                    calisma_token: token,
+                    dogru: step.dogru,
+                    yanlis: 0,
+                    sure: step.sure,
+                    saniyebilgisi: step.saniyebilgisi,
+                    dtv: step.dogru * 6,
+                    ytv: 0,
+                    yarisma_puani: step.dogru,
+                    metin: '',
+                    metingrububilgisi: '',
+                    baslik: '',
+                    imla: ''
+                };
+
+                this.broadcast({ type: 'TAKE_FIRST_PLACE_PROGRESS', step: i + 1, total: 6, status: 'sending' });
+                this.broadcast({ type: 'LOG', message: 'Ad\u0131m ' + (i+1) + '/6: G\u00F6nderiliyor (' + step.sure + ', ' + step.dogru + ' kelime)...' });
+
+                await this.sendPayloadAsync(payload);
+
+                this.broadcast({ type: 'LOG', message: 'Ad\u0131m ' + (i+1) + '/6: Tamamland\u0131!' });
+            }
+
+            this.broadcast({ type: 'LOG', message: 'Birincili\u011Fe yerle\u015Fme tamamland\u0131!' });
+            this.broadcast({ type: 'TAKE_FIRST_PLACE_DONE', success: true });
+        },
+
         openPopup: function() {
             const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
             if (win) {
@@ -524,87 +622,6 @@
 
             btn.onclick = () => this.openPopup();
             document.body.appendChild(btn);
-        },
-
-        injectHUDStyles: function() {
-            const style = document.createElement('style');
-            style.textContent = `
-                #ghost-hud {
-                    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
-                    z-index: 10000; display: flex; flex-direction: column; gap: 5px;
-                    pointer-events: none; opacity: 0; transition: opacity 0.5s;
-                }
-                .hud-bar {
-                    background: rgba(0,0,0,0.7); border: 1px solid #00ff41;
-                    padding: 5px 15px; border-radius: 4px; display: flex; align-items: center;
-                    gap: 10px; color: #fff; font-family: monospace; font-size: 14px;
-                    box-shadow: 0 0 10px rgba(0,255,65,0.2); backdrop-filter: blur(4px);
-                }
-                .hud-time { font-weight: bold; font-size: 18px; color: #00ff41; }
-                .hud-label { font-size: 10px; color: #aaa; text-transform: uppercase; }
-                .hud-safe { border-color: #ff00de; box-shadow: 0 0 10px rgba(255,0,222,0.2); }
-                .hud-safe .hud-time { color: #ff00de; }
-            `;
-            document.head.appendChild(style);
-        }
-    };
-
-    // --- HUD YÖNETİCİSİ (ANA EKRAN) ---
-    const HUDManager = {
-        el: null,
-        intervals: [],
-
-        create: function() {
-            if (document.getElementById('ghost-hud')) return;
-            const container = document.createElement('div');
-            container.id = 'ghost-hud';
-            container.innerHTML = `
-                <div class="hud-bar">
-                    <span class="hud-label">Orijinal</span>
-                    <span class="hud-time" id="hud-orig">00:00</span>
-                </div>
-                <div class="hud-bar hud-safe">
-                    <span class="hud-label">+5sn Safe</span>
-                    <span class="hud-time" id="hud-safe">00:00</span>
-                </div>
-            `;
-            document.body.appendChild(container);
-            this.el = container;
-        },
-
-        show: function(duration) {
-            this.create();
-            this.el.style.opacity = '1';
-
-            // Temizle
-            this.intervals.forEach(clearInterval);
-            this.intervals = [];
-
-            let originalTime = duration;
-            let safeTime = duration + 5;
-
-            const update = () => {
-                const fmt = (t) => {
-                    if (t < 0) return "00:00";
-                    const m = Math.floor(t / 60).toString().padStart(2,'0');
-                    const s = (t % 60).toString().padStart(2,'0');
-                    return `${m}:${s}`;
-                };
-
-                document.getElementById('hud-orig').textContent = fmt(originalTime);
-                document.getElementById('hud-safe').textContent = fmt(safeTime);
-
-                if (originalTime > 0) originalTime--;
-                if (safeTime > 0) safeTime--;
-
-                if (safeTime < 0) {
-                    this.el.style.opacity = '0';
-                    this.intervals.forEach(clearInterval);
-                }
-            };
-
-            update(); // İlk render
-            this.intervals.push(setInterval(update, 1000));
         }
     };
 
@@ -691,6 +708,22 @@
             transition: all 0.2s;
         }
         .disconnect-btn:hover { background: rgba(0,255,65,0.25); box-shadow: 0 0 15px rgba(0,255,65,0.3); }
+
+        /* Confirmation Overlay */
+        .confirm-overlay {
+            display: none; position: fixed; z-index: 99998; left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(5,5,5,0.95); backdrop-filter: blur(10px);
+            flex-direction: column; align-items: center; justify-content: center;
+        }
+        .confirm-overlay.active { display: flex; }
+        .confirm-box {
+            background: #111; border: 1px solid var(--neon-green); border-radius: 8px; padding: 25px;
+            max-width: 420px; display: flex; flex-direction: column; gap: 15px;
+            box-shadow: 0 0 30px rgba(0,255,65,0.15);
+        }
+        .confirm-title { font-size: 18px; font-weight: bold; color: var(--neon-green); text-align: center; }
+        .confirm-msg { font-size: 12px; color: #aaa; line-height: 1.6; }
+        .confirm-progress { font-size: 12px; color: var(--neon-green); text-align: center; padding: 10px 0; }
 
         .app-container {
             display: grid;
@@ -911,11 +944,11 @@
         <!-- MAIN -->
         <div class="main">
 
-            <div style="margin-bottom: 10px; font-size: 12px; color: #888; display: flex; align-items: center; gap: 8px;">
-                <span id="user-avatar" style="width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:18px;background:rgba(255,255,255,0.1);">👤</span>
+            <div style="margin-bottom: 10px; font-size: 12px; color: #888; display: flex; align-items: center; gap: 12px;">
+                <span id="user-avatar" style="width:48px;height:48px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:28px;background:rgba(255,255,255,0.1);">👤</span>
                 <div>
-                    <span id="username-display" style="color: var(--neon-green); font-weight: bold;">...</span>
-                    <span id="email-display" style="color: #666; font-size: 10px; display: block;"></span>
+                    <span id="username-display" style="color: var(--neon-green); font-weight: bold; font-size: 16px;">...</span>
+                    <span id="email-display" style="color: #666; font-size: 11px; display: block;"></span>
                 </div>
             </div>
 
@@ -923,24 +956,12 @@
             <div class="glass-panel">
                 <span class="panel-title">SİSTEM KONTROLÜ</span>
 
-                <div class="switch-row green">
-                    <span class="switch-label">OTO-GÖNDER (Auto-Submit)</span>
-                    <label class="switch">
-                        <input type="checkbox" id="toggle-autosubmit">
-                        <span class="slider"></span>
-                    </label>
-                </div>
-
                 <div class="switch-row red">
                     <span class="switch-label">BLOKLAYICI (Request Blocker)</span>
                     <label class="switch">
                         <input type="checkbox" id="toggle-blocker">
                         <span class="slider"></span>
                     </label>
-                </div>
-
-                <div style="font-size: 10px; color: #666; margin-top: 5px;">
-                    * Auto-Submit açıldığında Blocker otomatik kilitlenir.
                 </div>
             </div>
 
@@ -1013,6 +1034,10 @@
                 <div id="log-area">Sistem Hazır.</div>
             </div>
 
+            <button class="cyber-btn" id="btn-take-first" style="width: 100%; background: rgba(255,0,222,0.1); border-color: var(--neon-pink); color: var(--neon-pink); font-size: 14px; padding: 14px;">
+                🏆 BİRİNCİLİĞE YERLEŞ
+            </button>
+
         </div>
     </div>
 
@@ -1035,6 +1060,29 @@
         <div class="disconnect-title">Bağlantı Koptu</div>
         <div class="disconnect-msg">Ana sayfa ile iletişim kurulamıyor. Sayfa kapatılmış veya yenilenmiş olabilir.</div>
         <button class="disconnect-btn" id="btn-reconnect">🔄 Yeniden Bağlan</button>
+    </div>
+
+    <!-- Confirmation Overlay -->
+    <div class="confirm-overlay" id="confirm-overlay">
+        <div class="confirm-box">
+            <div class="confirm-title">🏆 Birinciliğe Yerleş</div>
+            <div class="confirm-msg">
+                Bu işlem 6 adımda tüm sürelere skor gönderecektir:<br><br>
+                <b style="color:var(--neon-green)">1.</b> 1 DK — 360 kelime, 60 sn<br>
+                <b style="color:var(--neon-green)">2.</b> 3 DK — 1080 kelime, 180 sn<br>
+                <b style="color:var(--neon-green)">3.</b> 5 DK — 1800 kelime, 300 sn<br>
+                <b style="color:var(--neon-pink)">4.</b> 1 DK — 1800 kelime, 300 sn (boost)<br>
+                <b style="color:var(--neon-pink)">5.</b> 3 DK — 1800 kelime, 300 sn (boost)<br>
+                <b style="color:var(--neon-pink)">6.</b> 5 DK — 1800 kelime, 300 sn (boost)<br><br>
+                Her adımda yeni bir token alınacak ve veriler gönderilecektir.<br>
+                Devam etmek istiyor musunuz?
+            </div>
+            <div id="confirm-progress" class="confirm-progress" style="display:none;"></div>
+            <div id="confirm-buttons" style="display:flex;gap:10px;justify-content:center;">
+                <button class="cyber-btn" id="btn-confirm-yes" style="flex:1;">EVET, BAŞLAT</button>
+                <button class="cyber-btn" id="btn-confirm-no" style="flex:1;border-color:var(--neon-red);color:var(--neon-red);">İPTAL</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -1190,7 +1238,6 @@
         // Elementler
         const els = {
             reqList: document.getElementById('req-list'),
-            toggleAuto: document.getElementById('toggle-autosubmit'),
             toggleBlock: document.getElementById('toggle-blocker'),
             inputs: {
                 calisma_token: document.getElementById('calisma_token'),
@@ -1221,8 +1268,6 @@
 
                 // Config
                 els.toggleBlock.checked = msg.state.isBlocking;
-                els.toggleAuto.checked = msg.state.isAutoSubmit;
-                updateLock();
 
                 // Builder
                 if (msg.state.builderData && msg.state.builderData.calisma_token) {
@@ -1329,7 +1374,7 @@
                             userName = topUser.username || "Bilinmiyor";
                             userScore = topUser.puan || 0;
                             if (topUser.profilephoto && !topUser.profilephoto.startsWith('http')) {
-                                imgSrc = 'https://katiponline.com/' + topUser.profilephoto;
+                                imgSrc = 'https://katiponline.com/duello/' + topUser.profilephoto;
                             } else {
                                 imgSrc = topUser.profilephoto || '';
                             }
@@ -1412,7 +1457,7 @@
                     unameEl.style.color = 'var(--neon-green)';
                     if (msg.email) emailEl.textContent = msg.email;
                     if (msg.profilePhoto) {
-                        avatarEl.innerHTML = '<img src="' + msg.profilePhoto + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;" onerror="this.parentElement.innerHTML=\\'👤\\'">';
+                        avatarEl.innerHTML = '<img src="' + msg.profilePhoto + '" style="width:48px;height:48px;border-radius:50%;object-fit:cover;" onerror="this.parentElement.innerHTML=\\'👤\\'">';
                     }
                 } else {
                     unameEl.textContent = 'Giriş yapılmamış!';
@@ -1437,10 +1482,29 @@
             }
             else if (msg.type === 'FORCE_BLOCKER') {
                 els.toggleBlock.checked = msg.value;
-                updateLock();
             }
             else if (msg.type === 'LOG') {
                 log(msg.message);
+            }
+            else if (msg.type === 'TAKE_FIRST_PLACE_PROGRESS') {
+                const prog = document.getElementById('confirm-progress');
+                if (prog) {
+                    prog.style.display = 'block';
+                    prog.textContent = 'Ad\u0131m ' + msg.step + '/' + msg.total + (msg.status === 'token' ? ' \u2014 Token al\u0131n\u0131yor...' : ' \u2014 G\u00F6nderiliyor...');
+                }
+            }
+            else if (msg.type === 'TAKE_FIRST_PLACE_DONE') {
+                const overlay = document.getElementById('confirm-overlay');
+                overlay.classList.remove('active');
+                const prog = document.getElementById('confirm-progress');
+                if (prog) { prog.style.display = 'none'; prog.textContent = ''; }
+                const btns = document.getElementById('confirm-buttons');
+                if (btns) btns.style.display = 'flex';
+                if (msg.success) {
+                    showNotification('Birincili\u011Fe yerle\u015Fme tamamland\u0131!', 'success');
+                } else {
+                    showNotification('\u0130\u015Flem ba\u015Far\u0131s\u0131z oldu!', 'error');
+                }
             }
         });
 
@@ -1517,22 +1581,6 @@
 
         // --- Logic & Events ---
 
-        function updateLock() {
-            if (els.toggleAuto.checked) {
-                els.toggleBlock.checked = true;
-                els.toggleBlock.disabled = true;
-                els.toggleBlock.parentElement.parentElement.style.opacity = "0.7";
-            } else {
-                els.toggleBlock.disabled = false;
-                els.toggleBlock.parentElement.parentElement.style.opacity = "1";
-            }
-        }
-
-        els.toggleAuto.addEventListener('change', (e) => {
-            updateLock();
-            safePost({ type: 'UPDATE_CONFIG', key: 'isAutoSubmit', value: e.target.checked });
-        });
-
         els.toggleBlock.addEventListener('change', (e) => {
             safePost({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked });
         });
@@ -1568,6 +1616,22 @@
             } else {
                 showNotification('Ana sayfa bulunamadı. Lütfen sayfayı yeniden açın.', 'error');
             }
+        });
+
+        // --- Birinciliğe Yerleş ---
+        document.getElementById('btn-take-first').addEventListener('click', () => {
+            document.getElementById('confirm-overlay').classList.add('active');
+        });
+
+        document.getElementById('btn-confirm-yes').addEventListener('click', () => {
+            document.getElementById('confirm-buttons').style.display = 'none';
+            document.getElementById('confirm-progress').style.display = 'block';
+            document.getElementById('confirm-progress').textContent = 'Başlatılıyor...';
+            safePost({ type: 'TAKE_FIRST_PLACE' });
+        });
+
+        document.getElementById('btn-confirm-no').addEventListener('click', () => {
+            document.getElementById('confirm-overlay').classList.remove('active');
         });
 
         // --- Auto Math & Profil ---
