@@ -95,8 +95,18 @@
                     }
                 }
 
+                let reqId = null;
                 if (!isBypass) {
-                    self.logRequest('XHR', this._method, url, body, false);
+                    reqId = self.logRequest('XHR', this._method, url, body, false);
+                }
+
+                if (reqId) {
+                    this.addEventListener('load', function() {
+                        self.updateRequestResponse(reqId, this.responseText, this.status);
+                    });
+                    this.addEventListener('error', function() {
+                        self.updateRequestResponse(reqId, "Network Error", 0);
+                    });
                 }
 
                 return originalXHRSend.apply(this, arguments);
@@ -127,8 +137,9 @@
                     }
                 }
 
+                let reqId = null;
                 if (!isBypass) {
-                    self.logRequest('FETCH', method, url, body, false);
+                    reqId = self.logRequest('FETCH', method, url, body, false);
                 }
 
                 try {
@@ -138,8 +149,19 @@
                     if (url.includes('islemler.php')) {
                         clone.text().then(text => self.processStartResponse(text));
                     }
+
+                    if (reqId) {
+                         const respClone = response.clone();
+                         respClone.text().then(text => {
+                             self.updateRequestResponse(reqId, text, response.status);
+                         });
+                    }
+
                     return response;
                 } catch (err) {
+                    if (reqId) {
+                         self.updateRequestResponse(reqId, "Fetch Error: " + err.message, 0);
+                    }
                     throw err;
                 }
             };
@@ -187,7 +209,9 @@
             const reqData = {
                 id: Date.now() + Math.random(), // Unique ID
                 type, method, url, body, blocked,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                response: null,
+                status: null
             };
             this.state.requests.unshift(reqData); // En başa ekle
 
@@ -196,6 +220,22 @@
                 type: 'NEW_REQUEST',
                 request: reqData
             });
+
+            return reqData.id;
+        },
+
+        updateRequestResponse: function(id, response, status) {
+             const req = this.state.requests.find(r => r.id === id);
+             if (req) {
+                 req.response = response;
+                 req.status = status;
+                 this.broadcast({
+                     type: 'UPDATE_REQUEST',
+                     id: id,
+                     response: response,
+                     status: status
+                 });
+             }
         },
 
         // Helper: Manuel Token İste
@@ -209,8 +249,29 @@
                 body: 'islem=calisma_baslat'
             }).then(res => res.text()).then(text => {
                 console.log("GhostKernel: Yeni token yanıtı:", text);
+
+                let token = null;
+                try {
+                    const json = JSON.parse(text);
+                    token = json.calisma_token || json.token;
+                } catch(e) {
+                     const match = text.match(/calisma_token["']?\s*:\s*["']?([^"'}]+)["']?/);
+                     if (match) token = match[1];
+                }
+
+                if (token) {
+                    this.state.lastToken = token;
+                    if (!this.state.builderData) this.state.builderData = {};
+                    this.state.builderData.calisma_token = token;
+
+                    this.broadcast({ type: 'REFRESH_DONE', data: this.state.builderData });
+                    this.broadcast({ type: 'LOG', message: "Token Alındı!" });
+                } else {
+                    this.broadcast({ type: 'LOG', message: "Token Alınamadı!" });
+                }
             }).catch(err => {
                 console.error("GhostKernel: Token isteği hatası", err);
+                this.broadcast({ type: 'LOG', message: "Token Hatası!" });
             });
         },
 
@@ -240,19 +301,34 @@
                 params.append(key, payload[key]);
             }
 
-            window.fetch('https://katiponline.com/klavye-hiz-testi/sonuckaydet.php', {
+            const url = 'https://katiponline.com/klavye-hiz-testi/sonuckaydet.php';
+            const body = params.toString();
+
+            // Log Request
+            const reqId = this.logRequest('FETCH', 'POST', url, body, false);
+
+            window.fetch(url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                     'X-Bypass-Interceptor': 'true'
                 },
-                body: params.toString()
-            }).then(res => res.text()).then(text => {
+                body: body
+            }).then(res => {
+                const status = res.status;
+                return res.text().then(text => ({ text, status }));
+            }).then(({ text, status }) => {
                 console.log("GhostKernel: Auto-Submit BAŞARILI!", text);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER BAŞARILI!" });
+
+                // Update Log with Response
+                this.updateRequestResponse(reqId, text, status);
             }).catch(err => {
                 console.error("GhostKernel: Auto-Submit HATASI", err);
                 this.broadcast({ type: 'LOG', message: "OTO-GÖNDER HATASI!" });
+
+                // Update Log with Error
+                this.updateRequestResponse(reqId, err.message, 0);
             });
         },
 
