@@ -427,21 +427,48 @@
                     this.broadcast({ type: 'PONG', timestamp: Date.now() });
                     break;
                 case 'GET_USERNAME': {
+                    let email = null;
                     let uname = null;
+                    let profilePhoto = null;
                     // Find <li><p>email@...</p></li> on the page
-                    const allP = document.querySelectorAll('li > p');
-                    for (const p of allP) {
-                        const text = p.textContent.trim();
-                        if (text && text.includes('@')) {
-                            uname = text;
-                            break;
+                    const allLi = document.querySelectorAll('li');
+                    for (const li of allLi) {
+                        const p = li.querySelector('p');
+                        if (p) {
+                            const text = p.textContent.trim();
+                            if (text && text.includes('@')) {
+                                email = text;
+                                break;
+                            }
+                        }
+                    }
+                    // Find username: <li> text content that is not the email
+                    for (const li of allLi) {
+                        const text = li.textContent.trim();
+                        if (text && !text.includes('@') && !text.includes('<') && text.length > 1 && text.length < 40) {
+                            const childEl = li.children;
+                            if (childEl.length === 0) {
+                                uname = text;
+                                break;
+                            }
                         }
                     }
                     if (!uname) {
                         const profileEl = document.querySelector('.username, .profil-adi, [class*="username"], [class*="kullanici"]');
                         if (profileEl) uname = profileEl.textContent.trim();
                     }
-                    this.broadcast({ type: 'USERNAME_RESULT', username: uname });
+                    // Find profile photo from <li><img></li>
+                    for (const li of allLi) {
+                        const img = li.querySelector('img');
+                        if (img && li.children.length === 1) {
+                            const src = img.getAttribute('src');
+                            if (src) {
+                                profilePhoto = src.startsWith('http') ? src : 'https://katiponline.com/' + src;
+                                break;
+                            }
+                        }
+                    }
+                    this.broadcast({ type: 'USERNAME_RESULT', username: uname, email: email, profilePhoto: profilePhoto });
                     break;
                 }
             }
@@ -874,8 +901,12 @@
         <!-- MAIN -->
         <div class="main">
 
-            <div style="margin-bottom: 10px; font-size: 12px; color: #888;">
-                Giriş yapıldı: <span id="username-display" style="color: var(--neon-green); font-weight: bold;">...</span>
+            <div style="margin-bottom: 10px; font-size: 12px; color: #888; display: flex; align-items: center; gap: 8px;">
+                <span id="user-avatar" style="width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:18px;background:rgba(255,255,255,0.1);">👤</span>
+                <div>
+                    <span id="username-display" style="color: var(--neon-green); font-weight: bold;">...</span>
+                    <span id="email-display" style="color: #666; font-size: 10px; display: block;"></span>
+                </div>
             </div>
 
             <!-- AYARLAR -->
@@ -1236,41 +1267,58 @@
                 const results = msg.data;
                 const container = document.getElementById('leaderboard-content');
                 container.innerHTML = "";
+                const durationOrder = ['1:00', '3:00', '5:00'];
+                const durationLabels = {'1:00': '1 DK', '3:00': '3 DK', '5:00': '5 DK'};
+                const currentUser = window._currentUsername || null;
 
-                for (const time in results) {
+                durationOrder.forEach(function(time) {
                     const rawData = results[time];
+                    if (!rawData) return;
 
                     let imgSrc = '';
                     let userName = '???';
                     let userScore = '0';
                     let found = false;
+                    let myScore = null;
+                    let iAmFirst = false;
 
                     // 1. Try JSON Parsing
                     try {
                         let data = JSON.parse(rawData);
+                        let allUsers = [];
 
                         // Handle {durum: "success", mesaj: [...]} format
                         if (data && data.durum === 'success' && Array.isArray(data.mesaj) && data.mesaj.length > 0) {
-                            data = data.mesaj;
+                            allUsers = data.mesaj;
                         } else if (data && data.mesaj && Array.isArray(data.mesaj)) {
-                            data = data.mesaj;
+                            allUsers = data.mesaj;
+                        } else if (Array.isArray(data)) {
+                            allUsers = data;
+                        } else if (data && data.username) {
+                            allUsers = [data];
                         }
 
-                        // If array, take first; if object, take it
-                        let topUser = null;
-                        if (Array.isArray(data) && data.length > 0) topUser = data[0];
-                        else if (data && !Array.isArray(data) && data.username) topUser = data;
-
-                        if (topUser) {
+                        if (allUsers.length > 0) {
+                            const topUser = allUsers[0];
                             userName = topUser.username || "Bilinmiyor";
                             userScore = topUser.puan || 0;
-                            // Fix relative path if needed
                             if (topUser.profilephoto && !topUser.profilephoto.startsWith('http')) {
                                 imgSrc = 'https://katiponline.com/' + topUser.profilephoto;
                             } else {
                                 imgSrc = topUser.profilephoto || '';
                             }
                             found = true;
+
+                            // Search for current user in the list
+                            if (currentUser) {
+                                for (let i = 0; i < allUsers.length; i++) {
+                                    if (allUsers[i].username && allUsers[i].username.toLowerCase() === currentUser.toLowerCase()) {
+                                        myScore = allUsers[i].puan || 0;
+                                        if (i === 0) iAmFirst = true;
+                                        break;
+                                    }
+                                }
+                            }
                         }
                     } catch(e) {
                         // Not JSON, fall back to HTML parsing
@@ -1293,24 +1341,33 @@
                         } catch(e) { console.error("Leaderboard Parse Error:", e); }
                     }
 
-                  if (found) {
-    const leaderEmojis = ['🦊', '🐱', '🐼', '🦁', '🐯', '🐰', '🐨', '🐸', '🦉', '🐺'];
-    const rndEmoji = leaderEmojis[Math.floor(Math.random() * leaderEmojis.length)];
-    let avatarHtml;
-    if (imgSrc) {
-        avatarHtml = '<img src="' + imgSrc + '" class="leader-img" onerror="this.outerHTML=\\'<span class=leader-emoji>' + rndEmoji + '</span>\\'" >';
-    } else {
-        avatarHtml = '<span class="leader-emoji">' + rndEmoji + '</span>';
-    }
-    container.innerHTML += '<div class="leader-item">' +
-                               avatarHtml +
-                               '<div class="leader-info">' +
-                                   '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
-                                   '<span class="leader-score">' + userScore + ' Puan</span>' +
-                               '</div>' +
-                           '</div>';
-}
-                }
+                    if (found) {
+                        const leaderEmojis = ['🦊', '🐱', '🐼', '🦁', '🐯', '🐰', '🐨', '🐸', '🦉', '🐺'];
+                        const rndEmoji = leaderEmojis[Math.floor(Math.random() * leaderEmojis.length)];
+                        let avatarHtml;
+                        if (imgSrc) {
+                            avatarHtml = '<img src="' + imgSrc + '" class="leader-img" onerror="this.outerHTML=\\'<span class=leader-emoji>' + rndEmoji + '</span>\\'" >';
+                        } else {
+                            avatarHtml = '<span class="leader-emoji">' + rndEmoji + '</span>';
+                        }
+                        let itemHtml = '<div class="leader-item">' +
+                                           avatarHtml +
+                                           '<div class="leader-info">' +
+                                               '<span class="leader-name">' + userName + ' (' + durationLabels[time] + ')</span>' +
+                                               '<span class="leader-score">' + userScore + ' Puan</span>' +
+                                           '</div>' +
+                                       '</div>';
+
+                        // Show user score info
+                        if (iAmFirst) {
+                            itemHtml += '<div style="font-size:10px;color:var(--neon-green);padding:2px 5px;margin-top:2px;">🏆 Birinci sizsiniz!</div>';
+                        } else if (myScore !== null) {
+                            itemHtml += '<div style="font-size:10px;color:#aaa;padding:2px 5px;margin-top:2px;">Sizin skorunuz: <span style="color:var(--neon-green)">' + myScore + '</span> Puan</div>';
+                        }
+
+                        container.innerHTML += itemHtml;
+                    }
+                });
             }
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
@@ -1320,12 +1377,20 @@
             else if (msg.type === 'USERNAME_RESULT') {
                 usernameReceived = true;
                 if (usernameTimeout) clearTimeout(usernameTimeout);
-                if (msg.username) {
-                    document.getElementById('username-display').textContent = msg.username;
-                    document.getElementById('username-display').style.color = 'var(--neon-green)';
+                const unameEl = document.getElementById('username-display');
+                const emailEl = document.getElementById('email-display');
+                const avatarEl = document.getElementById('user-avatar');
+                window._currentUsername = msg.username || null;
+                if (msg.username || msg.email) {
+                    unameEl.textContent = msg.username || msg.email;
+                    unameEl.style.color = 'var(--neon-green)';
+                    if (msg.email) emailEl.textContent = msg.email;
+                    if (msg.profilePhoto) {
+                        avatarEl.innerHTML = '<img src="' + msg.profilePhoto + '" style="width:28px;height:28px;border-radius:50%;object-fit:cover;" onerror="this.parentElement.innerHTML=\\'👤\\'">';
+                    }
                 } else {
-                    document.getElementById('username-display').textContent = 'Giriş yapılmamış!';
-                    document.getElementById('username-display').style.color = 'var(--neon-red)';
+                    unameEl.textContent = 'Giriş yapılmamış!';
+                    unameEl.style.color = 'var(--neon-red)';
                 }
             }
             else if (msg.type === 'PONG') {
@@ -1367,10 +1432,17 @@
 
             let icon = (req.method === 'POST') ? Icons.upload : Icons.wifi;
 
+            // Extract islem= parameter for islemler.php requests
+            let islemInfo = '';
+            if (req.body && typeof req.body === 'string' && req.url && req.url.includes('islemler.php')) {
+                const islemMatch = req.body.match(/islem=([^&]+)/);
+                if (islemMatch) islemInfo = ' [islem=' + decodeURIComponent(islemMatch[1]) + ']';
+            }
+
             li.innerHTML = \`
                 <span class="req-time">[\${time}]</span>
                 <div>\${icon} <span class="req-method">\${req.method}</span></div>
-                <span class="req-url">\${req.url.split('/').pop()}</span>
+                <span class="req-url">\${req.url.split('/').pop()}\${islemInfo}</span>
             \`;
 
             // Animation for pending
