@@ -1465,7 +1465,7 @@
         els.inputs.dogru.addEventListener('input', calculateStats);
         els.inputs.yanlis.addEventListener('input', calculateStats);
 
-    </script>
+    <\/script>
 </body>
 </html>
             `);
