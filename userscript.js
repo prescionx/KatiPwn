@@ -1172,17 +1172,15 @@
                         } catch(e) { console.error("Leaderboard Parse Error:", e); }
                     }
 
-                    if (found) {
-                        container.innerHTML += `
-                            <div class="leader-item">
-                                <img src="${imgSrc}" class="leader-img" onerror="this.style.display='none'">
-                                <div class="leader-info">
-                                    <span class="leader-name">${userName} (${time})</span>
-                                    <span class="leader-score">${userScore} Puan</span>
-                                </div>
-                            </div>
-                        `;
-                    }
+                  if (found) {
+    container.innerHTML += '<div class="leader-item">' +
+                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
+                               '<div class="leader-info">' +
+                                   '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
+                                   '<span class="leader-score">' + userScore + ' Puan</span>' +
+                               '</div>' +
+                           '</div>';
+}
                 }
             }
             else if (msg.type === 'GAME_STARTED') {
