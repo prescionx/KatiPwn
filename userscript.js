@@ -1280,7 +1280,7 @@
 
                   if (found) {
     container.innerHTML += '<div class="leader-item">' +
-                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\'none\'" >' +
+                               '<img src="' + imgSrc + '" class="leader-img" onerror="this.style.display=\\'none\\'" >' +
                                '<div class="leader-info">' +
                                    '<span class="leader-name">' + userName + ' (' + time + ')</span>' +
                                    '<span class="leader-score">' + userScore + ' Puan</span>' +
