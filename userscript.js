@@ -272,7 +272,7 @@
                     if (!this.state.builderData) this.state.builderData = {};
                     this.state.builderData.calisma_token = token;
 
-                    this.broadcast({ type: 'REFRESH_DONE', data: this.state.builderData });
+                    this.broadcast({ type: 'TOKEN_UPDATED', token: token });
                     this.broadcast({ type: 'LOG', message: "Token Alındı!" });
                 } else {
                     this.broadcast({ type: 'LOG', message: "Token Alınamadı!" });
@@ -950,9 +950,9 @@
 
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                     <div class="profile-badges">
-                        <span class="badge" onclick="setProfile('normal')">NORMAL (60)</span>
-                        <span class="badge" onclick="setProfile('pro')">PRO (110)</span>
-                        <span class="badge" onclick="setProfile('god')">GOD (200+)</span>
+                        <span class="badge" onclick="setProfile('1dk')">1 DK (360)</span>
+                        <span class="badge" onclick="setProfile('3dk')">3 DK (1080)</span>
+                        <span class="badge" onclick="setProfile('5dk')">5 DK (1800)</span>
                     </div>
                     <button class="cyber-btn refresh-btn" id="btn-refresh">MANUEL YENİLE</button>
                 </div>
@@ -968,7 +968,7 @@
 
                     <div class="input-group">
                         <label>Doğru Kelime</label>
-                        <input type="number" id="dogru" value="120">
+                        <input type="number" id="dogru" value="360">
                     </div>
                     <div class="input-group">
                         <label>Yanlış Kelime</label>
@@ -986,12 +986,12 @@
 
                     <div class="input-group">
                         <label>Puan</label>
-                        <input type="number" id="yarisma_puani" value="120">
+                        <input type="number" id="yarisma_puani" value="360">
                     </div>
 
                     <div class="input-group">
                         <label>DTV (Doğru Tuş)</label>
-                        <input type="number" id="dtv" value="700">
+                        <input type="number" id="dtv" value="2160">
                     </div>
                     <div class="input-group">
                         <label>YTV (Yanlış Tuş)</label>
@@ -1431,6 +1431,10 @@
                 fillForm(msg.data);
                 log("Veriler tazelendi.");
             }
+            else if (msg.type === 'TOKEN_UPDATED') {
+                els.inputs.calisma_token.value = msg.token;
+                log("Yeni token alındı.");
+            }
             else if (msg.type === 'FORCE_BLOCKER') {
                 els.toggleBlock.checked = msg.value;
                 updateLock();
@@ -1569,12 +1573,14 @@
         // --- Auto Math & Profil ---
 
         window.setProfile = (type) => {
-            let d = 60, y = 2;
-            if (type === 'pro') { d = 110; y = 1; }
-            if (type === 'god') { d = 220; y = 0; }
+            let d = 360, y = 0, sure = '01:00', sn = 60;
+            if (type === '3dk') { d = 1080; sure = '03:00'; sn = 180; }
+            if (type === '5dk') { d = 1800; sure = '05:00'; sn = 300; }
 
             els.inputs.dogru.value = d;
             els.inputs.yanlis.value = y;
+            els.inputs.sure.value = sure;
+            els.inputs.saniyebilgisi.value = sn;
             calculateStats();
         };
 
