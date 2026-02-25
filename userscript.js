@@ -1021,11 +1021,29 @@
             const match = document.cookie.match(/username=([^;]+)/);
             if (match && match[1]) {
                 document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+                try { if(opener) opener.sessionStorage.removeItem('kati_pwn_retry'); } catch(e){}
             } else {
-                if (opener && !opener.closed) {
-                     opener.location.reload();
+                let retried = false;
+                try {
+                    const last = opener.sessionStorage.getItem('kati_pwn_retry');
+                    if (last && (Date.now() - parseInt(last) < 15000)) {
+                        retried = true;
+                    }
+                } catch(e) {}
+
+                if (retried) {
+                    const el = document.getElementById('username-display');
+                    el.textContent = "Giriş Yapılmadı";
+                    el.style.color = "red";
+                } else {
+                    if (opener && !opener.closed) {
+                         try { opener.sessionStorage.setItem('kati_pwn_retry', Date.now()); } catch(e){}
+                         opener.location.reload();
+                         window.close(); // Refresh sonrası popup boşalacağı için kapatıyoruz.
+                    } else {
+                         location.reload();
+                    }
                 }
-                location.reload();
             }
         }, 500);
 
