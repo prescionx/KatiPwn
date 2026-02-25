@@ -1030,11 +1030,24 @@
         // Username Init
         setTimeout(() => {
             let username = null;
-            // 1. Cookie Check
-            const match = document.cookie.match(/username=([^;]+)/);
-            if (match && match[1]) username = decodeURIComponent(match[1]);
 
-            // 2. Storage Fallback
+            // 1. DOM Check (Priority)
+            if (opener && !opener.closed) {
+                try {
+                    const domLabel = opener.document.querySelector('li.nav-item.text-center label.text-uppercase');
+                    if (domLabel) {
+                        username = domLabel.textContent.trim();
+                    }
+                } catch(e) { console.error("DOM Username Check Error", e); }
+            }
+
+            // 2. Cookie Check (Fallback)
+            if (!username) {
+                const match = document.cookie.match(/username=([^;]+)/);
+                if (match && match[1]) username = decodeURIComponent(match[1]);
+            }
+
+            // 3. Storage Fallback
             if (!username && opener) {
                 try { username = opener.localStorage.getItem('username') || opener.sessionStorage.getItem('username'); } catch(e){}
             }
