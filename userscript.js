@@ -675,6 +675,23 @@
             border: 1px solid #333;
         }
 
+        /* Connection Lost Overlay */
+        .disconnect-overlay {
+            display: none; position: fixed; z-index: 99999; left: 0; top: 0; width: 100%; height: 100%;
+            background: rgba(5,5,5,0.97); backdrop-filter: blur(10px);
+            flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+        }
+        .disconnect-overlay.active { display: flex; }
+        .disconnect-icon { font-size: 64px; }
+        .disconnect-title { font-size: 22px; font-weight: bold; color: var(--neon-red); text-shadow: 0 0 10px var(--neon-red); }
+        .disconnect-msg { font-size: 13px; color: #888; text-align: center; max-width: 350px; }
+        .disconnect-btn {
+            margin-top: 10px; padding: 12px 32px; border: 1px solid var(--neon-green); background: rgba(0,255,65,0.1);
+            color: var(--neon-green); font-family: monospace; font-size: 13px; cursor: pointer; border-radius: 6px;
+            transition: all 0.2s;
+        }
+        .disconnect-btn:hover { background: rgba(0,255,65,0.25); box-shadow: 0 0 15px rgba(0,255,65,0.3); }
+
         .app-container {
             display: grid;
             grid-template-columns: 300px 1fr;
@@ -1012,6 +1029,14 @@
         </div>
     </div>
 
+    <!-- Connection Lost Overlay -->
+    <div class="disconnect-overlay" id="disconnect-overlay">
+        <div class="disconnect-icon">⚡</div>
+        <div class="disconnect-title">Bağlantı Koptu</div>
+        <div class="disconnect-msg">Ana sayfa ile iletişim kurulamıyor. Sayfa kapatılmış veya yenilenmiş olabilir.</div>
+        <button class="disconnect-btn" id="btn-reconnect">🔄 Yeniden Bağlan</button>
+    </div>
+
     <script>
         // --- İLETİŞİM KATMANI ---
         const opener = window.opener;
@@ -1048,6 +1073,14 @@
             }, 4000);
         }
 
+        // Disconnect overlay helpers
+        function showDisconnected() {
+            document.getElementById('disconnect-overlay').classList.add('active');
+        }
+        function hideDisconnected() {
+            document.getElementById('disconnect-overlay').classList.remove('active');
+        }
+
         // Safe postMessage wrapper
         let connectionLost = false;
         function safePost(msg) {
@@ -1058,14 +1091,14 @@
                 } catch(e) {
                     if (!connectionLost) {
                         connectionLost = true;
-                        showNotification('Mesaj gönderilemedi: ' + e.message, 'error');
+                        showDisconnected();
                     }
                     return false;
                 }
             } else {
                 if (!connectionLost) {
                     connectionLost = true;
-                    showNotification('Bağlantı koptu! Ana sayfa ile iletişim kurulamıyor.', 'error');
+                    showDisconnected();
                 }
                 return false;
             }
@@ -1081,11 +1114,11 @@
                     safePost({ type: 'PING' });
                     if (Date.now() - lastPong > 10000 && !connectionLost) {
                         connectionLost = true;
-                        showNotification('Bağlantı koptu! Sayfa ile iletişim kurulamıyor.', 'error');
+                        showDisconnected();
                     }
                 } else if (!connectionLost) {
                     connectionLost = true;
-                    showNotification('Bağlantı koptu! Ana sayfa kapatılmış olabilir.', 'error');
+                    showDisconnected();
                 }
             }, 3000);
         }
@@ -1390,6 +1423,7 @@
                 lastPong = Date.now();
                 if (connectionLost) {
                     connectionLost = false;
+                    hideDisconnected();
                     showNotification('Bağlantı yeniden kuruldu!', 'success');
                 }
             }
@@ -1517,6 +1551,19 @@
 
         document.getElementById('btn-top-scorers').addEventListener('click', () => {
             safePost({ type: 'GET_TOP_SCORERS' });
+        });
+
+        document.getElementById('btn-reconnect').addEventListener('click', () => {
+            if (opener && !opener.closed) {
+                hideDisconnected();
+                connectionLost = false;
+                lastPong = Date.now();
+                safePost({ type: 'PING' });
+                requestUsername();
+                safePost({ type: 'GET_TOP_SCORERS' });
+            } else {
+                showNotification('Ana sayfa bulunamadı. Lütfen sayfayı yeniden açın.', 'error');
+            }
         });
 
         // --- Auto Math & Profil ---
