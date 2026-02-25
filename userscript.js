@@ -33,6 +33,14 @@
             this.injectTriggerButton();
 
             window.addEventListener('message', (e) => this.handleMessage(e));
+
+            // Shift+K ile popup aç
+            document.addEventListener('keydown', (e) => {
+                if (e.shiftKey && e.code === 'KeyK' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                    e.preventDefault();
+                    this.openPopup();
+                }
+            });
         },
 
         // Interceptor
@@ -415,6 +423,20 @@
                 case 'GET_TOP_SCORERS':
                     this.fetchTopScorers();
                     break;
+                case 'PING':
+                    this.broadcast({ type: 'PONG', timestamp: Date.now() });
+                    break;
+                case 'GET_USERNAME': {
+                    let uname = null;
+                    const cMatch = document.cookie.match(/username=([^;]+)/);
+                    if (cMatch) uname = decodeURIComponent(cMatch[1]);
+                    if (!uname) {
+                        const profileEl = document.querySelector('.username, .profil-adi, [class*="username"], [class*="kullanici"]');
+                        if (profileEl) uname = profileEl.textContent.trim();
+                    }
+                    this.broadcast({ type: 'USERNAME_RESULT', username: uname });
+                    break;
+                }
             }
         },
 
@@ -450,9 +472,19 @@
             });
         },
 
+        openPopup: function() {
+            const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
+            if (win) {
+                UIManager.render(win);
+                this.popupWindow = win;
+            } else {
+                alert("Lütfen popup izni verin!");
+            }
+        },
+
         injectTriggerButton: function() {
             const btn = document.createElement('button');
-            btn.textContent = 'KatiPwn';
+            btn.textContent = 'KatiPwn (Shift+K)';
             btn.style.cssText = `
                 position: fixed; bottom: 20px; left: 20px; z-index: 99999;
                 padding: 10px 20px; background: rgba(0,0,0,0.8); color: #00ff41;
@@ -463,15 +495,7 @@
             btn.onmouseover = () => btn.style.boxShadow = "0 0 20px #00ff41";
             btn.onmouseout = () => btn.style.boxShadow = "0 0 10px #00ff41";
 
-            btn.onclick = () => {
-                const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
-                if (win) {
-                    UIManager.render(win);
-                    this.popupWindow = win;
-                } else {
-                    alert("Lütfen popup izni verin!");
-                }
-            };
+            btn.onclick = () => this.openPopup();
             document.body.appendChild(btn);
         },
 
@@ -971,12 +995,86 @@
             key: '<svg class="icon" viewBox="0 0 24 24"><path d="M12.65 10C11.83 7.67 9.61 6 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6c2.61 0 4.83-1.67 5.65-4H17v4h4v-4h2v-4H12.65zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>'
         };
 
-        // Username Init
-        setTimeout(() => {
-            const match = document.cookie.match(/username=([^;]+)/);
-            if (match) {
-                document.getElementById('username-display').textContent = decodeURIComponent(match[1]);
+        // Username Init via postMessage
+        let usernameReceived = false;
+        let usernameTimeout = null;
+
+        // Notification helper
+        function showNotification(text, type) {
+            const notif = document.createElement('div');
+            notif.style.cssText = 'position:fixed;top:10px;right:10px;z-index:99999;padding:12px 20px;border-radius:6px;font-size:12px;font-family:monospace;color:#fff;opacity:0;transition:opacity 0.3s;max-width:350px;';
+            if (type === 'error') notif.style.background = 'rgba(255,42,42,0.9)';
+            else if (type === 'success') notif.style.background = 'rgba(0,255,65,0.15)';
+            else notif.style.background = 'rgba(0,0,0,0.8)';
+            notif.style.border = '1px solid ' + (type === 'error' ? '#ff2a2a' : type === 'success' ? '#00ff41' : '#555');
+            notif.textContent = text;
+            document.body.appendChild(notif);
+            setTimeout(() => notif.style.opacity = '1', 10);
+            setTimeout(() => {
+                notif.style.opacity = '0';
+                setTimeout(() => notif.remove(), 300);
+            }, 4000);
+        }
+
+        // Safe postMessage wrapper
+        let connectionLost = false;
+        function safePost(msg) {
+            if (opener && !opener.closed) {
+                try {
+                    opener.postMessage(msg, '*');
+                    return true;
+                } catch(e) {
+                    if (!connectionLost) {
+                        connectionLost = true;
+                        showNotification('Mesaj gönderilemedi: ' + e.message, 'error');
+                    }
+                    return false;
+                }
+            } else {
+                if (!connectionLost) {
+                    connectionLost = true;
+                    showNotification('Bağlantı koptu! Ana sayfa ile iletişim kurulamıyor.', 'error');
+                }
+                return false;
             }
+        }
+
+        // Heartbeat (Senkronizasyon)
+        let lastPong = Date.now();
+        let heartbeatInterval = null;
+
+        function startHeartbeat() {
+            heartbeatInterval = setInterval(() => {
+                if (opener && !opener.closed) {
+                    safePost({ type: 'PING' });
+                    if (Date.now() - lastPong > 10000 && !connectionLost) {
+                        connectionLost = true;
+                        showNotification('Bağlantı koptu! Sayfa ile iletişim kurulamıyor.', 'error');
+                    }
+                } else if (!connectionLost) {
+                    connectionLost = true;
+                    showNotification('Bağlantı koptu! Ana sayfa kapatılmış olabilir.', 'error');
+                }
+            }, 3000);
+        }
+
+        function requestUsername() {
+            if (safePost({ type: 'GET_USERNAME' })) {
+                usernameTimeout = setTimeout(() => {
+                    if (!usernameReceived) {
+                        showNotification('Username alınamadı, sayfa yenileniyor...', 'error');
+                        setTimeout(() => {
+                            if (opener && !opener.closed) opener.location.reload();
+                            window.location.reload();
+                        }, 2000);
+                    }
+                }, 5000);
+            }
+        }
+
+        setTimeout(() => {
+            requestUsername();
+            startHeartbeat();
         }, 500);
 
         // Modal Variables
@@ -1047,7 +1145,7 @@
 
         // Initialize
         if (opener) {
-            opener.postMessage({ type: 'GET_INIT_STATE' }, '*');
+            safePost({ type: 'GET_INIT_STATE' });
         }
 
         window.addEventListener('message', (e) => {
@@ -1135,6 +1233,14 @@
                     // 1. Try JSON Parsing
                     try {
                         let data = JSON.parse(rawData);
+
+                        // Handle {durum: "success", mesaj: [...]} format
+                        if (data && data.durum === 'success' && Array.isArray(data.mesaj) && data.mesaj.length > 0) {
+                            data = data.mesaj;
+                        } else if (data && data.mesaj && Array.isArray(data.mesaj)) {
+                            data = data.mesaj;
+                        }
+
                         // If array, take first; if object, take it
                         let topUser = null;
                         if (Array.isArray(data) && data.length > 0) topUser = data[0];
@@ -1186,7 +1292,27 @@
             else if (msg.type === 'GAME_STARTED') {
                 log("OYUN BAŞLADI: " + msg.token);
                 // Refresh triggerla
-                opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+                safePost({ type: 'MANUAL_REFRESH' });
+            }
+            else if (msg.type === 'USERNAME_RESULT') {
+                usernameReceived = true;
+                if (usernameTimeout) clearTimeout(usernameTimeout);
+                if (msg.username) {
+                    document.getElementById('username-display').textContent = msg.username;
+                } else {
+                    showNotification('Username alınamadı, sayfa yenileniyor...', 'error');
+                    setTimeout(() => {
+                        if (opener && !opener.closed) opener.location.reload();
+                        window.location.reload();
+                    }, 2000);
+                }
+            }
+            else if (msg.type === 'PONG') {
+                lastPong = Date.now();
+                if (connectionLost) {
+                    connectionLost = false;
+                    showNotification('Bağlantı yeniden kuruldu!', 'success');
+                }
             }
             else if (msg.type === 'REFRESH_DONE') {
                 fillForm(msg.data);
@@ -1280,15 +1406,15 @@
 
         els.toggleAuto.addEventListener('change', (e) => {
             updateLock();
-            opener.postMessage({ type: 'UPDATE_CONFIG', key: 'isAutoSubmit', value: e.target.checked }, '*');
+            safePost({ type: 'UPDATE_CONFIG', key: 'isAutoSubmit', value: e.target.checked });
         });
 
         els.toggleBlock.addEventListener('change', (e) => {
-            opener.postMessage({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked }, '*');
+            safePost({ type: 'UPDATE_CONFIG', key: 'isBlocking', value: e.target.checked });
         });
 
         document.getElementById('btn-refresh').addEventListener('click', () => {
-            opener.postMessage({ type: 'MANUAL_REFRESH' }, '*');
+            safePost({ type: 'MANUAL_REFRESH' });
         });
 
         document.getElementById('btn-send').addEventListener('click', () => {
@@ -1296,15 +1422,15 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'MANUAL_SEND', data: formData }, '*');
+            safePost({ type: 'MANUAL_SEND', data: formData });
         });
 
         document.getElementById('btn-request-token').addEventListener('click', () => {
-            opener.postMessage({ type: 'REQUEST_NEW_TOKEN' }, '*');
+            safePost({ type: 'REQUEST_NEW_TOKEN' });
         });
 
         document.getElementById('btn-top-scorers').addEventListener('click', () => {
-            opener.postMessage({ type: 'GET_TOP_SCORERS' }, '*');
+            safePost({ type: 'GET_TOP_SCORERS' });
         });
 
         // --- Auto Math & Profil ---
@@ -1333,7 +1459,7 @@
             document.querySelectorAll('#builder-form input').forEach(inp => {
                 formData[inp.id] = inp.value;
             });
-            opener.postMessage({ type: 'UPDATE_BUILDER', data: formData }, '*');
+            safePost({ type: 'UPDATE_BUILDER', data: formData });
         }
 
         els.inputs.dogru.addEventListener('input', calculateStats);
