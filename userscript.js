@@ -600,7 +600,7 @@
         },
 
         openPopup: function() {
-            const win = window.open('', 'kht_ghost_panel', 'width=900,height=800');
+            const win = window.open('', 'kht_ghost_panel', 'width=1200,height=900');
             if (win) {
                 UIManager.render(win);
                 this.popupWindow = win;
