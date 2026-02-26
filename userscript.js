@@ -5,6 +5,8 @@
 // @description  Katiponline.com klavye hız testi sayfasında, oyun sonuçlarını kaydeden POST isteklerini yakalayan, engelleyen ve özelleştirilmiş istekler gönderebilen gelişmiş bir kullanıcı scripti. Lütfen, katiponline.com'un kullanım şartlarına ve etik kurallarına uygun şekilde kullanın. Bu script, eğitim amaçlı geliştirilmiştir ve geliştiriciler, kötüye kullanımından sorumlu tutulamaz.
 // @author       PrescionX
 // @match        https://katiponline.com/klavye-hiz-testi/*
+// @updateURL    https://raw.githubusercontent.com/prescionx/KatiPwn/main/userscript.js
+// @downloadURL  https://raw.githubusercontent.com/prescionx/KatiPwn/main/userscript.js
 // @grant        none
 // ==/UserScript==
 // All i need is roses... Roses, 0:29 (Imanbek Remix) https://music.youtube.com/watch?v=nh4AY6U00J8   
